@@ -98,4 +98,75 @@ describe("BatchedPersistence (§1.6 async batched persistence)", () => {
     expect(rebuilt.getText("t").toString()).toBe("round trip");
     await p.destroy();
   });
+
+  it("re-queues and retries after a failed flush — no data loss, no poisoning", async () => {
+    // Reviewer HIGH finding: a single rejected flush must not silently drop the
+    // batch or kill all future writes.
+    const doc = new Y.Doc();
+    let failuresLeft = 1;
+    const errors: unknown[] = [];
+    const good: Uint8Array[][] = [];
+    const sink: PersistSink = {
+      flush(_id, updates) {
+        if (failuresLeft > 0) {
+          failuresLeft--;
+          return Promise.reject(new Error("transient disk error"));
+        }
+        good.push(updates);
+        return Promise.resolve();
+      },
+    };
+    const p = new BatchedPersistence("d1", doc, sink, {
+      debounceMs: 50,
+      retryBaseMs: 500,
+      onError: (e) => errors.push(e),
+    });
+
+    doc.getText("t").insert(0, "important");
+    await vi.advanceTimersByTimeAsync(50); // first attempt fails
+    expect(errors.length).toBe(1);
+    expect(good.length).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(500); // scheduled retry succeeds
+    expect(good.length).toBe(1);
+
+    // The retried batch still carries the original edit — nothing lost.
+    const rebuilt = new Y.Doc();
+    for (const u of good[0]) Y.applyUpdate(rebuilt, u);
+    expect(rebuilt.getText("t").toString()).toBe("important");
+    await p.destroy();
+  });
+
+  it("bounds memory by coalescing when the sink stalls", async () => {
+    // Reviewer MEDIUM finding: a slow/stalled sink must not let buffered bytes
+    // grow without limit. With maxBytes tiny, every edit coalesces the buffer.
+    const doc = new Y.Doc();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    const sink: PersistSink = {
+      flush() {
+        calls++;
+        return gate; // never resolves until released → flush is "in flight"
+      },
+    };
+    const p = new BatchedPersistence("d1", doc, sink, {
+      debounceMs: 1000,
+      maxBytes: 1,
+      maxBatch: 1_000_000,
+    });
+
+    const t = doc.getText("t");
+    for (let i = 0; i < 200; i++) t.insert(i, "x");
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 200 edits, but the pending buffer stays coalesced to a single update and
+    // only one flush was ever started (the rest returned the in-flight promise).
+    expect(p.pendingCount).toBeLessThanOrEqual(1);
+    expect(calls).toBe(1);
+
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+    await p.destroy();
+  });
 });

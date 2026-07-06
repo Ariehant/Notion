@@ -73,7 +73,7 @@ pub fn seal_with_aad(
                 aad,
             },
         )
-        .map_err(|_| CryptoError::Decryption)?;
+        .map_err(|_| CryptoError::Encryption)?;
     let mut nonce_bytes = [0u8; NONCE_LEN];
     nonce_bytes.copy_from_slice(nonce.as_slice());
     Ok(SealedBox {

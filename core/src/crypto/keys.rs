@@ -15,7 +15,7 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
-use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
+use x25519_dalek::{PublicKey as XPublicKey, SharedSecret, StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use super::aead::{open, seal, SealedBox};
@@ -98,11 +98,10 @@ impl DeviceKeypair {
     pub fn unwrap_dek(&self, wrapped: &WrappedDek) -> Result<DataKey, CryptoError> {
         let epk = XPublicKey::from(wrapped.ephemeral_pub);
         let shared = self.secret.diffie_hellman(&epk);
-        let aead_key = dek_seal_key(
-            &shared.to_bytes(),
-            &wrapped.ephemeral_pub,
-            &self.public.to_bytes(),
-        );
+        // Defensive: reject a degenerate (all-zero) shared secret that a
+        // low-order `ephemeral_pub` in a malicious wrap could force.
+        let shared = contributory(shared)?;
+        let aead_key = dek_seal_key(&shared, &wrapped.ephemeral_pub, &self.public.to_bytes());
         let bytes = open(&aead_key, &wrapped.sealed)?;
         let arr: [u8; KEY_LEN] = bytes
             .as_slice()
@@ -131,14 +130,25 @@ impl WrappedDek {
         let ephemeral = StaticSecret::random_from_rng(OsRng);
         let ephemeral_pub = XPublicKey::from(&ephemeral).to_bytes();
         let recipient_pk = XPublicKey::from(recipient.0);
-        let shared = ephemeral.diffie_hellman(&recipient_pk);
-        let aead_key = dek_seal_key(&shared.to_bytes(), &ephemeral_pub, &recipient.0);
+        // Reject a degenerate agreement (e.g. a low-order recipient key).
+        let shared = contributory(ephemeral.diffie_hellman(&recipient_pk))?;
+        let aead_key = dek_seal_key(&shared, &ephemeral_pub, &recipient.0);
         let sealed = seal(&aead_key, dek.as_bytes())?;
         Ok(WrappedDek {
             ephemeral_pub,
             recipient_pub: recipient.0,
             sealed,
         })
+    }
+}
+
+/// Reject non-contributory X25519 agreements (all-zero shared secret produced
+/// by low-order points), which carry no entropy from our secret.
+fn contributory(shared: SharedSecret) -> Result<[u8; 32], CryptoError> {
+    if shared.was_contributory() {
+        Ok(shared.to_bytes())
+    } else {
+        Err(CryptoError::WeakKeyAgreement)
     }
 }
 
@@ -242,6 +252,22 @@ mod tests {
 
         let wrapped = WrappedDek::seal_to(&dek, &intended.public()).unwrap();
         assert!(attacker.unwrap_dek(&wrapped).is_err());
+    }
+
+    #[test]
+    fn low_order_ephemeral_is_rejected() {
+        // A malicious wrap using an all-zero (low-order) ephemeral key must not
+        // decrypt to anything; the non-contributory agreement is rejected.
+        let device = DeviceKeypair::generate();
+        let wrapped = WrappedDek {
+            ephemeral_pub: [0u8; 32],
+            recipient_pub: device.public().0,
+            sealed: seal(&[0u8; 32], b"x").unwrap(),
+        };
+        assert!(matches!(
+            device.unwrap_dek(&wrapped),
+            Err(CryptoError::WeakKeyAgreement)
+        ));
     }
 
     #[test]

@@ -31,7 +31,10 @@ pub use kdf::{derive_master_key, subkeys, Argon2Params, MasterKey, SubKeys, Subk
 pub use keys::{
     DataKey, DeviceKeypair, DevicePublicKey, IdentityKeypair, IdentityPublicKey, WrappedDek,
 };
-pub use pairing::{sas_code, PairingGrant, SAS_WORDS};
+pub use pairing::{
+    sas_code, verify_commitment, PairingCommitment, PairingContribution, PairingGrant, SAS_WORDS,
+    SAS_WORD_COUNT,
+};
 pub use recovery::{RecoveryKit, RECOVERY_KEY_BYTES};
 
 use thiserror::Error;
@@ -42,6 +45,8 @@ use thiserror::Error;
 pub enum CryptoError {
     #[error("key derivation failed")]
     KeyDerivation,
+    #[error("authenticated encryption failed")]
+    Encryption,
     #[error("authenticated decryption failed (wrong key, tampered data, or wrong nonce)")]
     Decryption,
     #[error("malformed ciphertext envelope")]
@@ -52,6 +57,10 @@ pub enum CryptoError {
     InvalidRecoveryKey,
     #[error("signature verification failed")]
     BadSignature,
+    #[error("degenerate (non-contributory) key agreement")]
+    WeakKeyAgreement,
+    #[error("pairing commitment did not match the revealed contribution")]
+    PairingCommitmentMismatch,
 }
 
 /// Length in bytes of every symmetric key we derive/generate (256-bit).

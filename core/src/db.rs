@@ -189,7 +189,11 @@ impl EncryptedDb {
         let mut out = Vec::new();
         for r in rows {
             let (seq, enc_tag, sealed, created_at_ms) = r?;
-            let encoding = UpdateEncoding::from_tag(enc_tag as u8)
+            // Validate the full i64 BEFORE narrowing: `enc_tag as u8` alone
+            // would truncate e.g. 257 -> 1 and mis-accept it as V1 (§ review #8).
+            let encoding = u8::try_from(enc_tag)
+                .ok()
+                .and_then(UpdateEncoding::from_tag)
                 .ok_or(DbError::UnknownEncoding(enc_tag as u8))?;
             out.push(StoredUpdate {
                 seq,
@@ -421,5 +425,23 @@ mod tests {
         let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
         assert!(!contains(b"SECRETMARKER"));
         assert!(!contains(b"TOPSECRETBODY"));
+    }
+
+    #[test]
+    fn rejects_out_of_range_encoding_tag() {
+        // A corrupt/tampered row with encoding 257 must NOT be mis-decoded as V1
+        // (257 as u8 == 1). Validated before narrowing (§ review #8).
+        let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO sync_updates(doc_id, encoding, sealed, created_at)
+                 VALUES ('d', 257, x'00', 1)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            db.load_updates("d"),
+            Err(DbError::UnknownEncoding(_))
+        ));
     }
 }

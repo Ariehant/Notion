@@ -32,6 +32,127 @@ Two categories appear here:
 
 ---
 
+## 🔍 Adversarial security review — findings found & fixed
+
+After the initial build, five independent reviewers audited the crypto, SSRF,
+sanitizer, CRDT, and persistence code with distinct lenses. Confirmed findings
+below were fixed and covered by regression tests.
+
+### 🐞 CODE BUG #2 — [CRITICAL] Grindable pairing SAS → MITM could steal the DEK
+
+- **Where:** `core/src/crypto/pairing.rs` (`sas_code`).
+- **Defect:** the SAS was a deterministic, unsalted ~36-bit hash of only the two
+  X25519 device keys — no session nonce, no commit-then-reveal, and it never
+  bound the Ed25519 identity that `PairingGrant::accept` anchors trust on. An
+  active relay could pick its substituted keys _after_ seeing the victims' and
+  grind ~2¹⁸ keygens (seconds) to force both displayed SAS strings to match,
+  then wrap the DEK to its own key → full DEK compromise despite a "verified"
+  pairing.
+- **Fix:** each device now contributes a fresh random **nonce** and exchanges a
+  hash **commitment** (`PairingContribution::commitment`) before revealing its
+  contribution — so keys/nonce cannot be chosen adaptively, defeating grinding.
+  The SAS transcript now binds **both device keys, both identity keys, and both
+  nonces**.
+- **Tests:** `commitment_detects_post_commit_key_change`,
+  `sas_binds_identity_and_nonce`, `full_commit_reveal_and_grant_flow`.
+
+### 🐞 CODE BUG #3 — [HIGH] Flush-chain poisoning → silent, permanent data loss
+
+- **Where:** `apps/desktop/src/crdt/persistence.ts`.
+- **Defect:** a single rejected `sink.flush` left the internal promise chain in a
+  rejected state; every subsequent flush's `.then` callback never ran, so the
+  already-dequeued batch was dropped and **all future edits were silently lost**
+  for the object's lifetime (fire-and-forget flushes surfaced nothing).
+- **Fix:** replaced the chain with a single-flight drain loop that `catch`es
+  errors, **re-queues the failed batch at the front** (preserving order), and
+  schedules a backoff retry — a failure never poisons future writes.
+- **Tests:** `re-queues and retries after a failed flush — no data loss, no poisoning`.
+
+### 🐞 CODE BUG #4 — [MEDIUM] No real backpressure → unbounded memory
+
+- **Where:** `apps/desktop/src/crdt/persistence.ts`.
+- **Defect:** the size threshold only reset `pending`; under a slow/stalled sink
+  the buffered bytes were merely relocated onto an ever-growing promise chain
+  (a memory-exhaustion DoS). The "bounded memory" comment was false.
+- **Fix:** when the buffer exceeds `maxBytes` the pending updates are
+  **coalesced** with `Y.mergeUpdates` into a single update, bounding retained
+  memory to the merged-delta size regardless of edit rate.
+- **Tests:** `bounds memory by coalescing when the sink stalls`.
+
+### 🐞 CODE BUG #5 — [MEDIUM] Trailing-dot `localhost.` bypassed the SSRF name block
+
+- **Where:** `core/src/net/ssrf.rs` (`guard_url`).
+- **Defect:** `http://localhost./` parses to the domain `"localhost."`, which is
+  neither `== "localhost"` nor `ends_with(".localhost")`, so it skipped the block
+  and (via the embed path) reached loopback.
+- **Fix:** normalize the host by stripping trailing dots (`trim_end_matches('.')`)
+  and lowercasing before the local-name check.
+- **Tests:** `rejects_localhost_names_including_trailing_dot`.
+
+### 🐞 CODE BUG #6 — [MEDIUM] `sandboxed_embed` accepted unresolved domains (SSRF)
+
+- **Where:** `core/src/sanitize.rs` (`sandboxed_embed`).
+- **Defect:** the `NeedsDnsCheck` (domain) arm did nothing, so
+  `sandboxed_embed("https://internal.example/…")` (or a rebinding host) emitted
+  an iframe pointing at an internal service — contradicting the "SSRF-guarded"
+  guarantee. Iframes cannot be DNS-pinned by us.
+- **Fix:** embeds now require an **allowlisted provider host**
+  (`EMBED_HOST_ALLOWLIST`, matched exactly or as a subdomain); bare IP hosts are
+  rejected outright.
+- **Tests:** `embed_rejects_non_https_ssrf_and_unknown_hosts`,
+  `embed_allows_known_provider_subdomains`.
+
+### 🐞 CODE BUG #7 — [LOW] Incomplete IP blocklists (`0.0.0.0/8`, IPv6-embedded IPv4)
+
+- **Where:** `core/src/net/ssrf.rs` (`is_blocked_ip`).
+- **Defect:** only the single address `0.0.0.0` was blocked (not the whole
+  `0.0.0.0/8`); and IPv4 addresses embedded in IPv6 via the deprecated
+  IPv4-**compatible** form (`::a.b.c.d`), **6to4** (`2002::/16`), and **NAT64**
+  (`64:ff9b::/96`) were not unwrapped, so e.g. `2002:7f00:1::` (6to4 of
+  `127.0.0.1`) or `64:ff9b::7f00:1` (NAT64 of loopback) passed as public.
+- **Fix:** block the full `0.0.0.0/8` (`o[0] == 0`), and add `embedded_ipv4()`
+  which extracts the embedded v4 from mapped/compatible/6to4/NAT64 forms and
+  runs it through the v4 blocklist. Public embeddings stay allowed (precise).
+- **Tests:** `blocks_cloud_metadata_and_locals`,
+  `blocks_ipv6_locals_and_embedded_v4`, `allows_public_addresses`.
+
+### 🐞 CODE BUG #8 — [LOW] Encoding tag truncated before validation
+
+- **Where:** `core/src/db.rs` (`load_updates`).
+- **Defect:** `enc_tag as u8` narrowed the `i64` column _before_ validation, so a
+  tampered/corrupt value like `257` truncated to `1` and was mis-accepted as
+  `V1` instead of erroring.
+- **Fix:** validate the full `i64` with `u8::try_from(...).and_then(from_tag)`
+  before narrowing.
+- **Tests:** `rejects_out_of_range_encoding_tag`.
+
+### 🐞 CODE BUG #9 — [LOW] Non-contributory X25519 agreement not rejected (defensive)
+
+- **Where:** `core/src/crypto/keys.rs` (`WrappedDek::seal_to`, `unwrap_dek`).
+- **Defect (defensive):** X25519 `diffie_hellman` was used without a
+  `was_contributory()` check, so a low-order `ephemeral_pub` in a malicious wrap
+  could force an all-zero shared secret. Not exploitable in the current
+  `accept`-gated flow, but hardened before the API surface grows.
+- **Fix:** reject non-contributory agreements with `CryptoError::WeakKeyAgreement`.
+- **Tests:** `low_order_ephemeral_is_rejected`.
+
+### 🐞 CODE BUG #10 — [LOW] `seal` errors mislabeled as `Decryption`
+
+- **Where:** `core/src/crypto/aead.rs` (`seal_with_aad`).
+- **Defect:** an encryption failure was mapped to `CryptoError::Decryption`
+  (cosmetic; not exploitable, not an oracle).
+- **Fix:** added a distinct `CryptoError::Encryption` variant.
+
+> Reviewers also **verified sound** (no change needed): the raw-key PRAGMA is
+> injection-safe (`validate_raw_key`), `temp_store=MEMORY` holds and WAL doesn't
+> spill plaintext, the persistence origin/feedback-loop handling, the X25519
+> unknown-key-share binding, constant-time comparisons, DEK password-independence,
+> recovery-code parsing, zeroization, nonce freshness/AAD handling, HKDF
+> label separation, and the full ammonia XSS surface (script/style/svg/mathml/
+> event-handler/js-url/srcset stripping, sandbox policy, and src escaping).
+
+---
+
 ## §1 — Development anomalies & corrections
 
 ### [CRITICAL] §1.1 — `tauri-plugin-sql` does not support SQLCipher out of the box

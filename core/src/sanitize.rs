@@ -48,27 +48,74 @@ fn builder() -> Builder<'static> {
 /// framed content escape the sandbox.
 pub const EMBED_SANDBOX: &str = "allow-scripts allow-popups allow-forms allow-presentation";
 
+/// Provider allowlist for embeds. Embeds are loaded by the WebView itself, so we
+/// cannot DNS-pin them (see the SSRF module's rebinding note); instead we only
+/// allow known embed providers. Matches the host exactly or as a subdomain.
+pub const EMBED_HOST_ALLOWLIST: &[&str] = &[
+    "youtube.com",
+    "youtube-nocookie.com",
+    "youtu.be",
+    "vimeo.com",
+    "player.vimeo.com",
+    "loom.com",
+    "figma.com",
+    "codepen.io",
+    "codesandbox.io",
+    "replit.com",
+    "github.com",
+    "gist.github.com",
+    "google.com",
+    "docs.google.com",
+    "drive.google.com",
+    "maps.google.com",
+    "twitter.com",
+    "x.com",
+    "spotify.com",
+    "open.spotify.com",
+    "soundcloud.com",
+    "miro.com",
+    "canva.com",
+    "airtable.com",
+    "typeform.com",
+];
+
+fn embed_host_allowed(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    EMBED_HOST_ALLOWLIST
+        .iter()
+        .any(|a| h == *a || h.ends_with(&format!(".{a}")))
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EmbedError {
     #[error("embed source rejected: {0}")]
     Blocked(#[from] UrlGuardError),
     #[error("embed source must use https")]
     NotHttps,
+    #[error("embed host is not an allowed provider")]
+    HostNotAllowed,
 }
 
 /// Build a locked-down `<iframe>` for an allowed embed URL.
 ///
-/// The `src` is SSRF-guarded (§2.7) and required to be https; the iframe is
-/// sandboxed ([`EMBED_SANDBOX`]) and referrer-stripped. Tauri IPC is never
-/// exposed to embedded content (enforced at the WebView layer).
+/// The `src` must be https, must be an allowlisted provider host (raw IP hosts
+/// are rejected — an embed is never a bare IP), and passes the SSRF scheme/host
+/// checks (§2.7). The iframe is sandboxed ([`EMBED_SANDBOX`]) and
+/// referrer-stripped. Tauri IPC is never exposed to embedded content (enforced
+/// at the WebView layer).
 pub fn sandboxed_embed(src: &str) -> Result<String, EmbedError> {
     if !src.starts_with("https://") {
         return Err(EmbedError::NotHttps);
     }
-    // Reject SSRF targets (IP literals resolved here; domains flagged for the
-    // caller's resolver, but still scheme/host validated).
+    // Rejects bad schemes and IP-literal SSRF targets (loopback/private/etc.).
     match guard_url(src)? {
-        GuardedTarget::Ip(_) | GuardedTarget::NeedsDnsCheck(_) => {}
+        // A bare IP is never a legitimate provider embed — require a known host.
+        GuardedTarget::Ip(_) => return Err(EmbedError::HostNotAllowed),
+        GuardedTarget::NeedsDnsCheck(domain) => {
+            if !embed_host_allowed(&domain) {
+                return Err(EmbedError::HostNotAllowed);
+            }
+        }
     }
     let escaped = html_escape_attr(src);
     Ok(format!(
@@ -141,20 +188,40 @@ mod tests {
     }
 
     #[test]
-    fn embed_rejects_non_https_and_ssrf() {
+    fn embed_rejects_non_https_ssrf_and_unknown_hosts() {
         assert_eq!(
-            sandboxed_embed("http://example.com/x"),
+            sandboxed_embed("http://www.youtube.com/x"),
             Err(EmbedError::NotHttps)
         );
+        // IP-literal SSRF target blocked by the guard.
         assert!(matches!(
             sandboxed_embed("https://127.0.0.1/x"),
             Err(EmbedError::Blocked(_))
         ));
+        // Bare public IP is not an allowed provider.
+        assert_eq!(
+            sandboxed_embed("https://93.184.216.34/x"),
+            Err(EmbedError::HostNotAllowed)
+        );
+        // Unknown domain (incl. a rebinding-style host) is rejected (§ review #5).
+        assert_eq!(
+            sandboxed_embed("https://intranet.attacker.example/admin"),
+            Err(EmbedError::HostNotAllowed)
+        );
+        // Trailing-dot localhost cannot reach the allowlist either.
+        assert!(sandboxed_embed("https://localhost./x").is_err());
+    }
+
+    #[test]
+    fn embed_allows_known_provider_subdomains() {
+        assert!(sandboxed_embed("https://player.vimeo.com/video/123").is_ok());
+        assert!(sandboxed_embed("https://gist.github.com/u/abc").is_ok());
     }
 
     #[test]
     fn embed_src_is_attribute_escaped() {
-        let out = sandboxed_embed("https://ok.example/x?a=1&b=2\"><script>").unwrap();
+        // Allowlisted host with an injection attempt in the path/query.
+        let out = sandboxed_embed("https://www.youtube.com/embed/x?a=1&b=2\"><script>").unwrap();
         assert!(!out.contains("\"><script>"));
         assert!(out.contains("&amp;"));
     }
