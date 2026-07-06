@@ -1,0 +1,31 @@
+/* Notion Dynamic Island — panel + menu styling. */
+
+.notion-island-box {
+    spacing: 6px;
+    padding: 0 4px;
+}
+
+.notion-island-icon {
+    icon-size: 16px;
+}
+
+.notion-island-label {
+    font-weight: 500;
+    min-width: 40px;
+}
+
+.notion-island-header {
+    font-weight: bold;
+    padding-top: 6px;
+    padding-bottom: 2px;
+}
+
+.notion-island-time {
+    color: rgba(255, 255, 255, 0.65);
+    min-width: 78px;
+    font-feature-settings: "tnum";
+}
+
+.notion-island-event-title {
+    padding-left: 10px;
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.notion-island"
+          path="/org/gnome/shell/extensions/notion-island/">
+    <key name="max-events" type="i">
+      <default>5</default>
+      <range min="1" max="20"/>
+      <summary>Maximum events shown</summary>
+      <description>How many upcoming events to list in the panel menu.</description>
+    </key>
+    <key name="quickview-command" type="s">
+      <default>'notion-quickview'</default>
+      <summary>Quick-view launch command</summary>
+      <description>Command run to open the GTK quick-view app. May include arguments.</description>
+    </key>
+  </schema>
+</schemalist>

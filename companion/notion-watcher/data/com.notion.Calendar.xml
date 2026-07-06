@@ -1,0 +1,32 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!--
+  Interface served by notion-watcher at:
+    bus name:     com.notion.Calendar   (session bus)
+    object path:  /com/notion/Calendar
+
+  Event payloads are JSON array strings of CompanionEvent, e.g.
+    [{"id":"…","title":"Standup","startTime":1700049600,"endTime":1700053200,
+      "allDay":false,"location":"Zoom","description":null,
+      "blockId":null,"lastModified":1700049600}]
+  All timestamps are Unix seconds (UTC).
+-->
+<node>
+  <interface name="com.notion.Calendar">
+    <!-- Today + tomorrow's agenda as a JSON array string. -->
+    <method name="GetTodayEvents">
+      <arg name="events" type="s" direction="out"/>
+    </method>
+
+    <!-- The next `count` not-yet-ended events as a JSON array string. -->
+    <method name="GetUpcoming">
+      <arg name="count" type="i" direction="in"/>
+      <arg name="events" type="s" direction="out"/>
+    </method>
+
+    <!-- Broadcast whenever the shared database changes. -->
+    <signal name="EventsUpdated">
+      <arg name="json_data" type="s"/>
+    </signal>
+  </interface>
+</node>

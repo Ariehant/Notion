@@ -1,0 +1,56 @@
+# Component A — the DBus watcher daemon.
+#
+# Standalone crate (its own [workspace]) so tokio + zbus are NOT dragged into
+# the fast `notion_core`/`notion-companion` CI job. It builds headless (no GUI
+# libraries), but linking the Secret Service keyring backend needs libdbus at
+# build time (`apt-get install libdbus-1-dev`).
+[workspace]
+
+[package]
+name = "notion-watcher"
+version = "0.1.0"
+edition = "2021"
+description = "Background DBus daemon that watches the shared encrypted calendar DB and broadcasts EventsUpdated."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "notion-watcher"
+path = "src/main.rs"
+
+[dependencies]
+notion-companion = { path = "../notion-companion", features = ["keyring"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "signal",
+] }
+zbus = "5"
+inotify = "0.11"
+futures-util = "0.3"
+zeroize = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+# `cargo deb` packages the daemon plus its systemd user unit and DBus activation
+# file. Per-user `systemctl --user enable notion-watcher` is still needed after
+# install (a .deb cannot enable a user service for every user); the install.sh
+# script does this for source installs.
+[package.metadata.deb]
+maintainer = "Notion Companion <noreply@example.com>"
+copyright = "2024, Notion Companion contributors"
+extended-description = "Background DBus daemon that watches the shared encrypted calendar database and broadcasts EventsUpdated so the GNOME Shell extension can show a live agenda."
+section = "utils"
+priority = "optional"
+depends = "$auto, libdbus-1-3"
+assets = [
+    ["target/release/notion-watcher", "usr/bin/", "755"],
+    ["data/notion-watcher.service", "usr/lib/systemd/user/", "644"],
+    ["data/com.notion.Calendar.service", "usr/share/dbus-1/services/", "644"],
+    ["data/com.notion.Calendar.xml", "usr/share/notion-watcher/", "644"],
+]

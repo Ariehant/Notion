@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=com.notion.Calendar
+Exec=/usr/bin/notion-watcher
+# Prefer starting the managed systemd user unit so restart/hardening apply.
+SystemdService=notion-watcher.service

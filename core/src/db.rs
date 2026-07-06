@@ -66,6 +66,26 @@ pub struct StoredSnapshot {
     pub created_at_ms: i64,
 }
 
+/// A flattened calendar event (audit-independent companion projection).
+///
+/// Timestamps are **Unix seconds (UTC)**. This is the shared contract between
+/// the main editor (which writes events derived from Database/Calendar blocks),
+/// the companion GTK quick-view (quick add / AI add), and the read-only DBus
+/// watcher daemon that surfaces them in the GNOME top bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarEvent {
+    pub id: String,
+    pub title: String,
+    pub start_time: i64,
+    pub end_time: i64,
+    pub all_day: bool,
+    pub location: Option<String>,
+    pub description: Option<String>,
+    /// Optional link back to the originating CRDT block inside a page body.
+    pub block_id: Option<String>,
+    pub last_modified: i64,
+}
+
 /// An open, encrypted SQLCipher database.
 pub struct EncryptedDb {
     conn: Connection,
@@ -85,6 +105,37 @@ impl EncryptedDb {
         validate_raw_key(raw_key_hex)?;
         let conn = Connection::open_in_memory()?;
         Self::configure(conn, raw_key_hex)
+    }
+
+    /// Open an existing encrypted database as a **read-only** reader (the
+    /// companion DBus watcher daemon).
+    ///
+    /// We deliberately open a normal read/write handle and then set
+    /// `PRAGMA query_only = TRUE`: the main app keeps the database in WAL mode,
+    /// and a hard `SQLITE_OPEN_READONLY` handle cannot create the `-shm` file a
+    /// WAL reader needs, so it would fail to read a live database. `query_only`
+    /// gives us the blueprint's write-protection guarantee (§companion) while
+    /// still reading WAL correctly. We do **not** migrate: the main app owns the
+    /// schema, and a query-only connection cannot run `CREATE TABLE` anyway.
+    pub fn open_query_only(path: &str, raw_key_hex: &str) -> Result<Self, DbError> {
+        validate_raw_key(raw_key_hex)?;
+        let conn = Connection::open(path)?;
+        conn.execute_batch(&format!("PRAGMA key = \"x'{raw_key_hex}'\";"))?;
+        // Verify the key before we promise a working reader (wrong key ⇒ error).
+        let _: i64 = conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))?;
+        conn.execute_batch(
+            "PRAGMA temp_store = MEMORY;
+             PRAGMA query_only = TRUE;",
+        )?;
+        Ok(EncryptedDb { conn })
+    }
+
+    /// Whether this connection is read-only (`PRAGMA query_only`).
+    pub fn is_query_only(&self) -> Result<bool, DbError> {
+        Ok(self
+            .conn
+            .query_row("PRAGMA query_only", [], |r| r.get::<_, i64>(0))?
+            != 0)
     }
 
     fn configure(conn: Connection, raw_key_hex: &str) -> Result<Self, DbError> {
@@ -153,7 +204,25 @@ impl EncryptedDb {
                  title,
                  body,
                  tokenize = 'unicode61 remove_diacritics 2'
-             );",
+             );
+             -- Flattened calendar events shared with the GNOME companion.
+             -- Timestamps are Unix *seconds* (UTC). `block_id` links back to the
+             -- originating CRDT block inside a page body (opaque; blocks are not
+             -- rows, so there is no foreign key). This table is a projection the
+             -- companion daemon can read cheaply without touching the CRDT log.
+             CREATE TABLE IF NOT EXISTS calendar_events (
+                 id            TEXT PRIMARY KEY,
+                 title         TEXT NOT NULL,
+                 start_time    INTEGER NOT NULL,
+                 end_time      INTEGER NOT NULL,
+                 all_day       INTEGER NOT NULL DEFAULT 0,
+                 location      TEXT,
+                 description   TEXT,
+                 block_id      TEXT,
+                 last_modified INTEGER NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_calendar_start
+                 ON calendar_events(start_time);",
         )?;
         self.conn.execute(
             "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('schema_version', '1')",
@@ -368,6 +437,114 @@ impl EncryptedDb {
         let rows = stmt.query_map(params![query], |row| row.get::<_, String>(0))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
+
+    // -----------------------------------------------------------------------
+    // Calendar events (shared with the GNOME companion)
+    // -----------------------------------------------------------------------
+
+    /// Insert or replace a calendar event (upsert on primary key `id`).
+    pub fn upsert_event(&self, ev: &CalendarEvent) -> Result<(), DbError> {
+        self.conn.execute(
+            "INSERT INTO calendar_events
+                 (id, title, start_time, end_time, all_day, location, description, block_id, last_modified)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET
+                 title = excluded.title,
+                 start_time = excluded.start_time,
+                 end_time = excluded.end_time,
+                 all_day = excluded.all_day,
+                 location = excluded.location,
+                 description = excluded.description,
+                 block_id = excluded.block_id,
+                 last_modified = excluded.last_modified",
+            params![
+                ev.id,
+                ev.title,
+                ev.start_time,
+                ev.end_time,
+                ev.all_day as i64,
+                ev.location,
+                ev.description,
+                ev.block_id,
+                ev.last_modified,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a calendar event by id. Returns whether a row was removed.
+    pub fn delete_event(&self, id: &str) -> Result<bool, DbError> {
+        let n = self
+            .conn
+            .execute("DELETE FROM calendar_events WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// Fetch a single event by id.
+    pub fn get_event(&self, id: &str) -> Result<Option<CalendarEvent>, DbError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, title, start_time, end_time, all_day, location, description, block_id, last_modified
+                   FROM calendar_events WHERE id = ?1",
+                params![id],
+                row_to_event,
+            )
+            .optional()?)
+    }
+
+    /// Events overlapping the half-open interval `[start, end)`, earliest first.
+    /// An event overlaps when it starts before `end` and ends after `start`.
+    pub fn events_in_range(&self, start: i64, end: i64) -> Result<Vec<CalendarEvent>, DbError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, start_time, end_time, all_day, location, description, block_id, last_modified
+               FROM calendar_events
+              WHERE start_time < ?2 AND end_time > ?1
+              ORDER BY start_time, id",
+        )?;
+        let rows = stmt.query_map(params![start, end], row_to_event)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The next `limit` events that have not yet ended as of `now` (seconds),
+    /// ordered by start time. Powers the top-bar "upcoming" list.
+    pub fn upcoming_events(&self, now: i64, limit: i64) -> Result<Vec<CalendarEvent>, DbError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, start_time, end_time, all_day, location, description, block_id, last_modified
+               FROM calendar_events
+              WHERE end_time > ?1
+              ORDER BY start_time, id
+              LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![now, limit], row_to_event)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// All events, earliest first (used by month/week views).
+    pub fn all_events(&self) -> Result<Vec<CalendarEvent>, DbError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, start_time, end_time, all_day, location, description, block_id, last_modified
+               FROM calendar_events ORDER BY start_time, id",
+        )?;
+        let rows = stmt.query_map([], row_to_event)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+}
+
+/// Map a `calendar_events` row (in the canonical column order used above) to a
+/// [`CalendarEvent`].
+fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<CalendarEvent> {
+    Ok(CalendarEvent {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        start_time: row.get(2)?,
+        end_time: row.get(3)?,
+        all_day: row.get::<_, i64>(4)? != 0,
+        location: row.get(5)?,
+        description: row.get(6)?,
+        block_id: row.get(7)?,
+        last_modified: row.get(8)?,
+    })
 }
 
 /// A raw SQLCipher key must be exactly 64 lowercase hex chars (256-bit).
@@ -576,6 +753,99 @@ mod tests {
         let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
         assert!(!contains(b"SECRETMARKER"));
         assert!(!contains(b"TOPSECRETBODY"));
+    }
+
+    fn sample_event(id: &str, start: i64, end: i64) -> CalendarEvent {
+        CalendarEvent {
+            id: id.to_string(),
+            title: format!("Event {id}"),
+            start_time: start,
+            end_time: end,
+            all_day: false,
+            location: Some("Room 1".into()),
+            description: None,
+            block_id: None,
+            last_modified: start,
+        }
+    }
+
+    #[test]
+    fn calendar_events_upsert_get_and_delete() {
+        let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        let mut ev = sample_event("e1", 1_000, 2_000);
+        db.upsert_event(&ev).unwrap();
+        assert_eq!(db.get_event("e1").unwrap().unwrap(), ev);
+
+        // Upsert on the same id replaces (does not duplicate).
+        ev.title = "Renamed".into();
+        ev.location = None;
+        ev.last_modified = 3_000;
+        db.upsert_event(&ev).unwrap();
+        let got = db.get_event("e1").unwrap().unwrap();
+        assert_eq!(got.title, "Renamed");
+        assert_eq!(got.location, None);
+        assert_eq!(db.all_events().unwrap().len(), 1);
+
+        assert!(db.delete_event("e1").unwrap());
+        assert!(!db.delete_event("e1").unwrap()); // already gone
+        assert!(db.get_event("e1").unwrap().is_none());
+    }
+
+    #[test]
+    fn calendar_events_range_and_upcoming() {
+        let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.upsert_event(&sample_event("a", 100, 200)).unwrap();
+        db.upsert_event(&sample_event("b", 150, 250)).unwrap();
+        db.upsert_event(&sample_event("c", 400, 500)).unwrap();
+
+        // [180, 420): overlaps a (ends 200 > 180), b (150 < 420), c (starts 400 < 420).
+        let ids: Vec<_> = db
+            .events_in_range(180, 420)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+
+        // A window strictly between events returns nothing.
+        assert!(db.events_in_range(260, 399).unwrap().is_empty());
+
+        // Upcoming from now=160 excludes nothing that still runs; ordered by start.
+        let up: Vec<_> = db
+            .upcoming_events(160, 2)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(up, vec!["a", "b"]); // a still running (ends 200), then b; limit 2
+
+        // now=300 drops a and b (both ended), leaving c.
+        let up: Vec<_> = db
+            .upcoming_events(300, 5)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(up, vec!["c"]);
+    }
+
+    #[test]
+    fn query_only_reader_cannot_write() {
+        // A reader opened query-only sees committed rows but rejects writes,
+        // matching the companion daemon's guarantee.
+        let path = temp_path();
+        let _guard = TempDb(path.clone());
+        {
+            let db = EncryptedDb::open(&path, KEY).unwrap();
+            db.upsert_event(&sample_event("e1", 10, 20)).unwrap();
+        }
+        let reader = EncryptedDb::open_query_only(&path, KEY).unwrap();
+        assert!(reader.is_query_only().unwrap());
+        assert_eq!(reader.all_events().unwrap().len(), 1);
+        // Writes are rejected at the SQL layer.
+        assert!(reader.upsert_event(&sample_event("e2", 30, 40)).is_err());
+        // A wrong key cannot open the reader at all.
+        assert!(EncryptedDb::open_query_only(&path, KEY2).is_err());
     }
 
     #[test]

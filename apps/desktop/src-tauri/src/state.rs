@@ -25,15 +25,27 @@ impl AppState {
         }
     }
 
-    /// Replace the live DB handle + sync key after a successful open.
+    /// Replace the live DB handle + sync key after a successful open, and
+    /// publish the SQLCipher key to the OS keyring so the GNOME companion can
+    /// open the same encrypted file. Keyring publishing is best-effort: on a
+    /// headless box (or with no Secret Service) the main app still works — the
+    /// companion simply has no key until the next unlock in a graphical session.
     pub fn install(&self, opened: crate::vault::OpenVault) -> Result<(), String> {
+        if let Err(e) = notion_companion::keyring::store_key_hex(&opened.sqlcipher_key_hex) {
+            eprintln!("notion: could not publish key to keyring (companion disabled): {e}");
+        }
         *self.db.lock().map_err(|_| "state poisoned")? = Some(opened.db);
         *self.sync_key.lock().map_err(|_| "state poisoned")? = Some(opened.sync_key);
         Ok(())
     }
 
-    /// Drop all key material + close the DB (lock the vault).
+    /// Drop all key material + close the DB (lock the vault) and remove the key
+    /// from the OS keyring so the companion also locks. Keyring removal is
+    /// best-effort for the same reason as publishing.
     pub fn clear(&self) -> Result<(), String> {
+        if let Err(e) = notion_companion::keyring::clear_key() {
+            eprintln!("notion: could not clear key from keyring: {e}");
+        }
         *self.db.lock().map_err(|_| "state poisoned")? = None;
         *self.sync_key.lock().map_err(|_| "state poisoned")? = None;
         Ok(())

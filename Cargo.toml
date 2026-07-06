@@ -1,12 +1,25 @@
 [workspace]
 resolver = "2"
-members = ["core"]
-exclude = ["apps/desktop/src-tauri"]
+members = ["core", "companion/notion-companion"]
+exclude = [
+    "apps/desktop/src-tauri",
+    "companion/notion-watcher",
+    "companion/notion-quickview",
+]
 
 # apps/desktop/src-tauri is intentionally NOT a workspace member: the `tauri`
 # crate requires GUI system libraries (WebKitGTK on Linux) to *build*, which are
 # not present in headless CI. The `core` crate carries all business logic and is
 # fully compiled + tested in CI. See docs/ARCHITECTURE.md.
+#
+# companion/notion-companion IS a member: its calendar/AI/time logic is pure and
+# gets built + unit-tested in CI (its DB helpers hang off a `sqlcipher` feature,
+# mirroring `core`, so the fast `--no-default-features` job stays lean).
+#
+# companion/notion-watcher (async DBus daemon) and companion/notion-quickview
+# (GTK4/libadwaita) are excluded like src-tauri: the watcher would drag tokio +
+# zbus into the fast core job, and the GTK app needs GUI system libraries CI
+# lacks. Both are standalone crates that reuse notion-companion + notion_core.
 
 [profile.release]
 lto = true

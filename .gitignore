@@ -16,6 +16,9 @@ coverage/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 
+# GNOME extension compiled schema (generated at install time)
+companion/gnome-extension/**/schemas/gschemas.compiled
+
 # Editor / OS
 .DS_Store
 .idea/

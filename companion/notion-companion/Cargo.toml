@@ -1,0 +1,49 @@
+# Shared logic for the GNOME companion ecosystem. This crate is a workspace
+# member so its pure logic (calendar event model, natural-language AI parsing,
+# time math, XDG paths) is compiled and unit-tested in headless CI.
+#
+# It mirrors `notion_core`'s feature layout: the DB-touching helpers hang off a
+# `sqlcipher` feature (on by default) so `cargo test --no-default-features` stays
+# a fast, crypto-only build — exactly like the core crate.
+[package]
+name = "notion-companion"
+version = "0.1.0"
+edition = "2021"
+description = "Shared logic for the GNOME companion: calendar model, AI parsing, XDG paths, keyring access to the shared encrypted DB."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "notion_companion"
+crate-type = ["lib"]
+
+[features]
+default = ["sqlcipher"]
+# Enables the helpers that open the shared SQLCipher database.
+sqlcipher = ["notion_core/sqlcipher"]
+# Real GNOME Keyring / Secret Service key provider (runtime needs a session bus).
+keyring = ["dep:keyring"]
+# Real Ollama HTTP client (runtime needs Ollama on http://localhost:11434).
+ollama-http = ["dep:reqwest"]
+
+[dependencies]
+# default-features=false so `--no-default-features` at the workspace root does
+# NOT drag SQLCipher into the fast job; our own `sqlcipher` feature re-enables it.
+notion_core = { path = "../../core", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+zeroize = "1"
+# clock: exposes chrono::Local so the daemon/app can read the system UTC offset.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# Optional real backends (behind features so CI's default build stays lean).
+keyring = { version = "3", optional = true, default-features = false, features = [
+    "sync-secret-service",
+    "crypto-rust",
+] }
+# Ollama is plain http on localhost, so no TLS backend is pulled in.
+reqwest = { version = "0.12", optional = true, default-features = false, features = [
+    "blocking",
+    "json",
+] }

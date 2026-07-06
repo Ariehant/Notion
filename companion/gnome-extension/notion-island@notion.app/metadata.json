@@ -1,0 +1,9 @@
+{
+  "uuid": "notion-island@notion.app",
+  "name": "Notion Dynamic Island",
+  "description": "Shows your Notion calendar agenda in the GNOME top bar and updates live from the notion-watcher DBus daemon. Click to open the quick-view app or the local-AI add dialog.",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/ariehant/notion",
+  "settings-schema": "org.gnome.shell.extensions.notion-island",
+  "version": 1
+}

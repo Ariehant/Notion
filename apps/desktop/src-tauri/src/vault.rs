@@ -88,6 +88,10 @@ pub struct OpenVault {
     pub db: EncryptedDb,
     /// Held in a zeroizing buffer so the key is wiped on drop (audit §2.6).
     pub sync_key: Zeroizing<[u8; 32]>,
+    /// The raw SQLCipher key (64-hex) published to the OS keyring so the GNOME
+    /// companion daemon/app can open the same encrypted file. Zeroized on drop;
+    /// this is the *derived DB key*, not the DEK root (least privilege).
+    pub sqlcipher_key_hex: Zeroizing<String>,
     pub recovery_code: Option<String>,
 }
 
@@ -145,10 +149,12 @@ fn decode_sealed(hex_str: &str) -> Result<SealedBox, VaultError> {
 /// Open a DB from a DEK: derive the content keys and hand SQLCipher the raw key.
 fn open_db_with_dek(dir: &Path, dek: &DataKey) -> Result<OpenVault, VaultError> {
     let content = dek.content_keys();
-    let db = EncryptedDb::open(&db_path(dir).to_string_lossy(), &content.sqlcipher_hex())?;
+    let sqlcipher_key_hex = Zeroizing::new(content.sqlcipher_hex());
+    let db = EncryptedDb::open(&db_path(dir).to_string_lossy(), &sqlcipher_key_hex)?;
     Ok(OpenVault {
         db,
         sync_key: Zeroizing::new(content.sync_aead),
+        sqlcipher_key_hex,
         recovery_code: None,
     })
 }

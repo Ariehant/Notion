@@ -1,0 +1,31 @@
+[Unit]
+Description=Notion calendar DBus watcher (companion daemon)
+Documentation=https://github.com/ariehant/notion
+# Runs inside the graphical user session (needs the session bus + keyring).
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=dbus
+BusName=com.notion.Calendar
+# %h expands to the user's home. Adjust if you installed the binary elsewhere;
+# the install.sh script rewrites this line for ~/.local/bin installs.
+ExecStart=/usr/bin/notion-watcher
+Restart=on-failure
+RestartSec=2
+
+# --- Light sandboxing ------------------------------------------------------
+# The daemon opens the DB read/write at the handle level (WAL needs to create a
+# -shm file) but enforces PRAGMA query_only, so it needs write access ONLY to
+# the shared data directory — nothing else under $HOME.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/co.merai.notion
+PrivateTmp=true
+RestrictNamespaces=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=graphical-session.target

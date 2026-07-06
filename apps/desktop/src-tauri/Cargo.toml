@@ -16,6 +16,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 notion_core = { path = "../../../core" }
+# Keyring only (no sqlcipher): on unlock we publish the derived SQLCipher key to
+# the OS keyring so the GNOME companion daemon/app can open the same DB. Sharing
+# this crate keeps the keyring service/account names in one place.
+notion-companion = { path = "../../../companion/notion-companion", default-features = false, features = ["keyring"] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
