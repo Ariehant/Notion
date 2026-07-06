@@ -83,3 +83,71 @@ export const tauriSanitizer: SanitizerBridge = {
   sanitizeHtml: (dirty) => invoke<string>("sanitize_html", { dirty }),
   sandboxedEmbed: (src) => invoke<string>("sandboxed_embed", { src }),
 };
+
+// --- Open Notebook AI (gated by ENABLE_OPEN_NOTEBOOK) ----------------------
+//
+// These wrap the `open_notebook_core` engine running in the Tauri backend. Every
+// call resolves against the SAME encrypted DB the editor uses; the WebView never
+// sees the DB key. When the feature flag is unset, `notebookEnabled()` is false
+// and the AI UI is hidden.
+
+/** One semantic/keyword search hit. */
+export interface SearchHit {
+  sourceId: string;
+  score: number;
+  title: string;
+}
+
+/** An ingested source (PDF/URL/audio/text) as returned by Rust. */
+export interface IngestedSource {
+  id: string;
+  sourceType: string;
+  sourcePath: string | null;
+  title: string;
+  summary: string | null;
+  processedAt: number;
+}
+
+/** The result of an agent action. */
+export interface AgentOutcome {
+  kind: string;
+  message: string;
+  createdId: string | null;
+}
+
+/** A transparency-log entry describing a past agent action. */
+export interface AgentLog {
+  id: string;
+  agentType: string;
+  prompt: string;
+  actionTaken: string;
+  blockAffected: string | null;
+  timestamp: number;
+}
+
+export const notebookEnabled = (): Promise<boolean> => invoke<boolean>("notebook_enabled");
+
+export const semanticSearch = (query: string, limit?: number): Promise<SearchHit[]> =>
+  invoke<SearchHit[]>("semantic_search", { query, limit: limit ?? null });
+
+/** Index a page's text into semantic memory (called alongside `indexPage`). */
+export const reindexPage = (pageId: string, title: string, body: string): Promise<void> =>
+  invoke("reindex_page", { pageId, title, body });
+
+export const ingestText = (text: string): Promise<IngestedSource> =>
+  invoke<IngestedSource>("ingest_text", { text });
+
+export const listSources = (): Promise<IngestedSource[]> =>
+  invoke<IngestedSource[]>("list_sources");
+
+export const runAgent = (prompt: string, blockId?: string): Promise<AgentOutcome> =>
+  invoke<AgentOutcome>("run_agent", { prompt, blockId: blockId ?? null });
+
+export const studioSummarize = (text: string): Promise<string> =>
+  invoke<string>("studio_summarize", { text });
+
+export const studioTransform = (text: string, instruction: string): Promise<string> =>
+  invoke<string>("studio_transform", { text, instruction });
+
+export const listAgentLogs = (limit?: number): Promise<AgentLog[]> =>
+  invoke<AgentLog[]>("list_agent_logs", { limit: limit ?? null });

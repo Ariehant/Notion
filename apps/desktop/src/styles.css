@@ -379,3 +379,250 @@ button {
 .slash-menu li button:hover {
   background: var(--bg-alt);
 }
+
+/* --- Open Notebook AI ---------------------------------------------------- */
+
+.slash-ai {
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
+/* Floating "magic wand" + studio toggle */
+.ai-fab,
+.ai-studio-toggle {
+  position: fixed;
+  right: 22px;
+  z-index: 40;
+  border: none;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  background: var(--accent);
+  color: #fff;
+}
+
+.ai-fab {
+  bottom: 22px;
+  width: 52px;
+  height: 52px;
+  font-size: 22px;
+}
+
+.ai-studio-toggle {
+  bottom: 84px;
+  width: 52px;
+  height: 34px;
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--bg-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+}
+
+/* Transient toast (drag-drop ingest feedback) */
+.ai-toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--text);
+  color: var(--bg);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+/* AI dialog (Ask AI / magic wand) */
+.ai-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+}
+
+.ai-modal {
+  width: min(560px, 92vw);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.ai-modal-title {
+  margin: 0 0 4px;
+}
+
+.ai-modal-hint {
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.ai-modal-input,
+.ai-input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-alt);
+  color: var(--text);
+  resize: vertical;
+}
+
+.ai-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ai-modal button.primary,
+.ai-panel button.primary,
+.ai-search-row button.primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+
+.ai-modal button.ghost,
+.ai-studio-head button.ghost {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+
+.ai-result {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--bg-alt);
+  border-radius: 8px;
+}
+
+.ai-error {
+  margin-top: 12px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* AI Studio drawer */
+.ai-studio {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 92vw);
+  z-index: 45;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-studio-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-tab {
+  flex: 1;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 6px 8px;
+}
+
+.ai-tab.active {
+  background: var(--bg-alt);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.ai-panel {
+  padding: 12px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-search-row {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-textarea {
+  min-height: 90px;
+}
+
+.ai-hits,
+.ai-sources,
+.ai-logs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-hit {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+}
+
+.ai-hit-score {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-sources li,
+.ai-logs li {
+  padding: 7px 9px;
+  background: var(--bg-alt);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.ai-log-action {
+  display: block;
+}
+
+.ai-log-prompt {
+  display: block;
+  font-size: 12px;
+}
+
+.ai-dim {
+  color: var(--text-dim);
+  font-size: 13px;
+}

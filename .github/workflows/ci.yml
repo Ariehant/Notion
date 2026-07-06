@@ -121,6 +121,56 @@ jobs:
           cp "companion/gnome-extension/notion-island@notion.app/extension.js" /tmp/ext-check.mjs
           node --check /tmp/ext-check.mjs
 
+  open-notebook-cli:
+    name: Open Notebook CLI (notion-cli)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install DBus dev headers (Secret Service keyring backend)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "open-notebook/notion-cli -> target"
+      - name: rustfmt
+        working-directory: open-notebook/notion-cli
+        run: cargo fmt --check
+      - name: clippy
+        working-directory: open-notebook/notion-cli
+        run: cargo clippy --all-targets -- -D warnings
+      - name: build (release)
+        working-directory: open-notebook/notion-cli
+        run: cargo build --release
+
+  open-notebook-mcp:
+    name: Open Notebook MCP (notion-mcp)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install DBus dev headers (Secret Service keyring backend)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "open-notebook/notion-mcp -> target"
+      - name: rustfmt
+        working-directory: open-notebook/notion-mcp
+        run: cargo fmt --check
+      - name: clippy
+        working-directory: open-notebook/notion-mcp
+        run: cargo clippy --all-targets -- -D warnings
+      - name: build (release)
+        working-directory: open-notebook/notion-mcp
+        run: cargo build --release
+
   desktop:
     name: Desktop app (Tauri build)
     runs-on: ubuntu-latest

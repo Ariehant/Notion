@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["core", "companion/notion-companion"]
+members = ["core", "companion/notion-companion", "open-notebook/open-notebook-core"]
 exclude = [
     "apps/desktop/src-tauri",
     "companion/notion-watcher",
     "companion/notion-quickview",
+    "open-notebook/notion-cli",
+    "open-notebook/notion-mcp",
 ]
 
 # apps/desktop/src-tauri is intentionally NOT a workspace member: the `tauri`
@@ -20,6 +22,15 @@ exclude = [
 # (GTK4/libadwaita) are excluded like src-tauri: the watcher would drag tokio +
 # zbus into the fast core job, and the GTK app needs GUI system libraries CI
 # lacks. Both are standalone crates that reuse notion-companion + notion_core.
+#
+# open-notebook/open-notebook-core IS a member: the merged "Open Notebook" engine
+# (memory/ingestion/studio/agents/MCP) is pure, injectable logic and is unit-tested
+# in CI. Its SQLCipher backend + Ollama client hang off `sqlcipher`/`ollama-http`
+# features (like core/companion) so `--no-default-features` stays lean.
+#
+# open-notebook/notion-cli (terminal client) and open-notebook/notion-mcp (localhost
+# MCP HTTP server) are excluded standalone crates: they pull tokio/keyring and only
+# ever wrap the tested open-notebook-core, exactly like the companion binaries.
 
 [profile.release]
 lto = true

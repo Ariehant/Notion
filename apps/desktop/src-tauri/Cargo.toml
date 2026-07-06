@@ -20,6 +20,13 @@ notion_core = { path = "../../../core" }
 # the OS keyring so the GNOME companion daemon/app can open the same DB. Sharing
 # this crate keeps the keyring service/account names in one place.
 notion-companion = { path = "../../../companion/notion-companion", default-features = false, features = ["keyring"] }
+# The merged "Open Notebook" engine. `sqlcipher` lets it open a second connection
+# to the shared notion.db (WAL, so concurrent with the editor's writer);
+# `ollama-http` wires the local Ollama gateway for summarize / agent planning.
+open-notebook-core = { path = "../../../open-notebook/open-notebook-core", features = [
+    "sqlcipher",
+    "ollama-http",
+] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

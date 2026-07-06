@@ -1,0 +1,38 @@
+# notion-cli — the terminal client (the "Rovo CLI equivalent" of the spec).
+#
+# Standalone crate (its own [workspace]) so it is NOT pulled into the fast core
+# CI job. It runs OUTSIDE the GUI and reads the SAME encrypted DB the desktop app
+# writes, retrieving the SQLCipher key from the GNOME Keyring (Secret Service) via
+# `notion-companion` — exactly the least-privilege key path the companion uses. No
+# GUI rendering; pure terminal interaction over the tested `open-notebook-core`.
+#
+# Linking the Secret Service backend needs libdbus at build time
+# (`apt-get install libdbus-1-dev`).
+[workspace]
+
+[package]
+name = "notion-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal client for the Notion knowledge base: semantic search, ingestion, and the local-AI agent over the shared encrypted DB."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "notion-cli"
+path = "src/main.rs"
+
+[dependencies]
+open-notebook-core = { path = "../open-notebook-core", features = [
+    "sqlcipher",
+    "ollama-http",
+] }
+# Key retrieval (Secret Service) + shared XDG paths, reused from the companion.
+notion-companion = { path = "../../companion/notion-companion", default-features = false, features = [
+    "keyring",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

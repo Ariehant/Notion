@@ -17,7 +17,7 @@ import {
   toggleChecked,
 } from "../crdt/blocks";
 import { computeTextDelta, isNoopDelta } from "../crdt/textdiff";
-import { indexPage } from "../bridge";
+import { indexPage, reindexPage } from "../bridge";
 
 // --- Caret helpers for plain-text contentEditable blocks -------------------
 //
@@ -323,9 +323,20 @@ interface EditorProps {
   pageId: string;
   title: string;
   onTitleChange: (title: string) => void;
+  /** Whether Open Notebook AI is on (adds `/ai` + semantic reindex on save). */
+  aiEnabled?: boolean;
+  /** Invoked by the `/ai` slash command with the block's id and current text. */
+  onAskAI?: (blockId: string, blockText: string) => void;
 }
 
-export function Editor({ doc, pageId, title, onTitleChange }: EditorProps) {
+export function Editor({
+  doc,
+  pageId,
+  title,
+  onTitleChange,
+  aiEnabled = false,
+  onAskAI,
+}: EditorProps) {
   const items = useBlocks(doc);
   const refs = useRef(new Map<string, HTMLDivElement>());
   const pendingFocus = useRef<{ id: string; offset: number } | null>(null);
@@ -398,17 +409,44 @@ export function Editor({ doc, pageId, title, onTitleChange }: EditorProps) {
     [doc, slash],
   );
 
-  // Debounced full-text indexing (title + body) for search (§1.8).
+  // `/ai` command: clear the "/" and hand the block off to the AI dialog.
+  const askAI = useCallback(() => {
+    if (!slash || !onAskAI) return;
+    const blocks = getBlocks(doc);
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks.get(i);
+      if (blockId(b) === slash.blockId) {
+        stripLeading(doc, b, blockText(b).toString().length); // clear the "/"
+        const text = blockText(b).toString();
+        onAskAI(slash.blockId, text);
+        pendingFocus.current = { id: slash.blockId, offset: 0 };
+        break;
+      }
+    }
+    setSlash(null);
+  }, [doc, slash, onAskAI]);
+
+  // Debounced full-text indexing (title + body) for search (§1.8). When AI is
+  // on, the same debounce also refreshes the semantic (vector) index so notes
+  // are findable by meaning; that call is best-effort and never blocks saving.
   const titleRef = useRef(title);
+  const aiRef = useRef(aiEnabled);
+  aiRef.current = aiEnabled;
   const scheduleIndex = useRef<() => void>(() => {});
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const run = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        void indexPage(pageId, titleRef.current, docPlainText(doc)).catch((err) =>
+        const body = docPlainText(doc);
+        void indexPage(pageId, titleRef.current, body).catch((err) =>
           console.error("index failed", err),
         );
+        if (aiRef.current) {
+          void reindexPage(pageId, titleRef.current, body).catch(() => {
+            /* AI disabled or unavailable — search still works via FTS. */
+          });
+        }
       }, 1200);
     };
     scheduleIndex.current = run;
@@ -456,6 +494,18 @@ export function Editor({ doc, pageId, title, onTitleChange }: EditorProps) {
           style={{ top: slash.top, left: slash.left }}
           onClick={(e) => e.stopPropagation()}
         >
+          {aiEnabled && onAskAI && (
+            <li>
+              <button
+                type="button"
+                className="slash-ai"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={askAI}
+              >
+                Ask AI ✨
+              </button>
+            </li>
+          )}
           {slashList.map((cmd) => (
             <li key={cmd.type}>
               <button

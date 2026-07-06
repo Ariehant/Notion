@@ -35,13 +35,13 @@ week no longer means spinning up the full React/WebView stack.
 
 ## Components
 
-| Path                                        | Component | Build in CI? |
-| ------------------------------------------- | --------- | ------------ |
+| Path                                        | Component                                                            | Build in CI?                                    |
+| ------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------- |
 | `notion-companion/`                         | Shared logic: event model, AI parsing, time math, XDG paths, keyring | **yes** — pure logic unit-tested (`cargo test`) |
-| `notion-watcher/`                           | **A.** DBus watcher daemon (tokio · inotify · zbus) | yes — dedicated `companion-daemon` job |
-| `gnome-extension/notion-island@notion.app/` | **B.** GNOME Shell extension (GJS) | yes — schema + JS syntax job |
-| `notion-quickview/`                         | **C.** GTK4/libadwaita quick-view + AI add | yes — `companion-quickview` job (GTK deps) |
-| `packaging/`                                | `install.sh` / `uninstall.sh` (per-user) | — |
+| `notion-watcher/`                           | **A.** DBus watcher daemon (tokio · inotify · zbus)                  | yes — dedicated `companion-daemon` job          |
+| `gnome-extension/notion-island@notion.app/` | **B.** GNOME Shell extension (GJS)                                   | yes — schema + JS syntax job                    |
+| `notion-quickview/`                         | **C.** GTK4/libadwaita quick-view + AI add                           | yes — `companion-quickview` job (GTK deps)      |
+| `packaging/`                                | `install.sh` / `uninstall.sh` (per-user)                             | —                                               |
 
 The **security-critical and logic-heavy** parts live in `notion-companion` and
 are unit-tested headless (calendar range/overlap math, natural-language AI
@@ -59,7 +59,7 @@ sees the password:
 2. The daemon and quick-view read it back and open the shared DB.
 3. On lock, the main app deletes the keyring entry, so the companion locks too.
 
-Publishing the *derived DB key* rather than the DEK root is deliberate
+Publishing the _derived DB key_ rather than the DEK root is deliberate
 least-privilege: the companion can read/write calendar rows but cannot unwrap
 the CRDT sync log or any other DEK-derived secret. Keyring publishing is
 best-effort — a headless main app still works; the companion simply has no key
@@ -78,9 +78,19 @@ Session bus, object path `/com/notion/Calendar` (see
 Payloads are JSON arrays of events with Unix-second timestamps:
 
 ```json
-[{ "id": "…", "title": "Standup", "startTime": 1700049600, "endTime": 1700053200,
-   "allDay": false, "location": "Zoom", "description": null,
-   "blockId": null, "lastModified": 1700049600 }]
+[
+  {
+    "id": "…",
+    "title": "Standup",
+    "startTime": 1700049600,
+    "endTime": 1700053200,
+    "allDay": false,
+    "location": "Zoom",
+    "description": null,
+    "blockId": null,
+    "lastModified": 1700049600
+  }
+]
 ```
 
 ## Local AI "Ask" mode
@@ -119,7 +129,7 @@ cargo deb --manifest-path companion/notion-watcher/Cargo.toml
 
 Produces a Debian package that drops the daemon binary, its systemd user unit,
 and the DBus activation file into place. Per-user `systemctl --user enable
-notion-watcher` is still needed after install (a `.deb` cannot enable a *user*
+notion-watcher` is still needed after install (a `.deb` cannot enable a _user_
 service for every account) — `install.sh` does this for source installs.
 
 ## Build & test

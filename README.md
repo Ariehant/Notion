@@ -29,14 +29,16 @@ It runs as a real desktop app:
 
 ## Layout
 
-| Path                      | What                                                                              | Status                        |
-| ------------------------- | --------------------------------------------------------------------------------- | ----------------------------- |
-| `core/`                   | Rust engine: crypto, CRDT store, SQLCipher DB, SSRF guard, sanitizer              | **built + tested (69 tests)** |
-| `apps/desktop/src/`       | React app: vault gate, sidebar, CRDT block editor, batched persistence            | **built + tested (51 tests)** |
-| `apps/desktop/src-tauri/` | Tauri command layer: vault lifecycle, page/editor/search commands (`notion_core`) | **built + tested (4 tests)**  |
-| `companion/`              | GNOME Companion Calendar & Dynamic Island: shared-DB watcher daemon, GTK4 quick-view, Shell extension, local-AI add | **built + tested (28 tests)** |
-| `BUGFIXES.md`             | Every audit finding quoted → code that resolves it                                | —                             |
-| `docs/ARCHITECTURE.md`    | Decisions (collaboration model, source of truth, key pipeline, vault)             | —                             |
+| Path                      | What                                                                                                                                    | Status                        |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `core/`                   | Rust engine: crypto, CRDT store, SQLCipher DB, SSRF guard, sanitizer                                                                    | **built + tested (69 tests)** |
+| `apps/desktop/src/`       | React app: vault gate, sidebar, CRDT block editor, batched persistence                                                                  | **built + tested (51 tests)** |
+| `apps/desktop/src-tauri/` | Tauri command layer: vault lifecycle, page/editor/search commands (`notion_core`)                                                       | **built + tested (4 tests)**  |
+| `companion/`              | GNOME Companion Calendar & Dynamic Island: shared-DB watcher daemon, GTK4 quick-view, Shell extension, local-AI add                     | **built + tested (28 tests)** |
+| `open-notebook/`          | Merged "Open Notebook" AI engine (memory/ingestion/studio/agents + MCP) sharing the encrypted DB, plus a CLI and a localhost MCP server | **built + tested (59 tests)** |
+| `BUGFIXES.md`             | Every audit finding quoted → code that resolves it                                                                                      | —                             |
+| `docs/ARCHITECTURE.md`    | Decisions (collaboration model, source of truth, key pipeline, vault)                                                                   | —                             |
+| `docs/OPEN_NOTEBOOK.md`   | How the Open Notebook AI engine was merged (phases, storage seam, rollback flag)                                                        | —                             |
 
 ## Build & run the desktop app
 
@@ -69,12 +71,30 @@ produces a self-contained `.deb` without either.)
 A native, low-memory companion lives in `companion/`: a background **DBus
 watcher daemon**, a **GNOME Shell extension** ("Dynamic Island") that shows your
 agenda in the top bar, and a **GTK4 quick-view** with a local-AI ("Ask AI ✨",
-via Ollama) event add. All three share the main app's *same* encrypted SQLite
+via Ollama) event add. All three share the main app's _same_ encrypted SQLite
 file — no data duplication, ~80–90% less RAM than opening the WebView to check a
 schedule. On unlock the main app publishes the derived SQLCipher key to the
 GNOME keyring so the companion can open the DB (least-privilege: the DB key, not
 the DEK root). See `companion/README.md` for architecture, the
 `com.notion.Calendar` DBus interface, and the per-user installer.
+
+## Open Notebook AI (optional)
+
+A merged, restructured fork of "Open Notebook" adds local AI over the **same**
+encrypted database (`open-notebook/`): semantic + keyword **memory** search,
+**ingestion** of pasted text / dropped files, an AI **studio** (summarize /
+rewrite / answer), and an action **agent** that turns "add a calendar event for
+tomorrow at 3pm" into a real `calendar_events` row the GNOME companion shows
+instantly. Two extra surfaces reuse the same engine: a terminal **`notion-cli`**
+and a loopback **`notion-mcp`** server so external clients (Claude Desktop,
+Cursor) can search and edit your notes.
+
+The engine (`open-notebook-core`) is an **injectable library**: it takes an
+already-unlocked DB via a `NotebookStorage` trait and never handles the password
+or the DB key. Generation runs against a **local** Ollama (no data leaves the
+machine); search works fully offline via a deterministic embedder. Everything is
+behind the `ENABLE_OPEN_NOTEBOOK` flag (unset = the app behaves exactly as
+before). See `docs/OPEN_NOTEBOOK.md` for the phase-by-phase design.
 
 ## Tests & checks
 
@@ -94,8 +114,10 @@ CI runs the Rust core (fmt/clippy/test, incl. the SQLCipher build), the frontend
 runs the `src-tauri` clippy + vault tests, and produces an installable `.deb`,
 and three **companion** jobs: the watcher daemon (fmt/clippy/build), the GTK4
 quick-view (installs GTK/libadwaita, builds it), and the GNOME extension (strict
-schema compile + JS syntax). Security-critical logic lives in `notion_core` and
-`notion-companion`, which are compiled and tested in the fast job.
+schema compile + JS syntax), plus two **Open Notebook** jobs that build the
+`notion-cli` and `notion-mcp` standalone crates (fmt/clippy/build). Security- and
+logic-critical code lives in `notion_core`, `notion-companion`, and
+`open-notebook-core`, which are compiled and tested in the fast job.
 
 ## Security posture (implemented)
 

@@ -1,0 +1,36 @@
+# notion-mcp — a localhost Model Context Protocol bridge.
+#
+# Standalone crate (its own [workspace]) so its HTTP server deps stay out of the
+# fast core CI job. It exposes the tested `open_notebook_core::mcp` JSON-RPC
+# dispatch (search_notes / create_page / add_event) over HTTP so external clients
+# (Claude Desktop, Cursor, …) can search and edit the vault. It binds ONLY to
+# 127.0.0.1 and reuses the shared SQLCipher key from the GNOME Keyring via
+# `notion-companion` (needs libdbus-1-dev at build time).
+[workspace]
+
+[package]
+name = "notion-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "Localhost MCP (Model Context Protocol) server over the shared encrypted Notion database."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "notion-mcp"
+path = "src/main.rs"
+
+[dependencies]
+open-notebook-core = { path = "../open-notebook-core", features = ["sqlcipher"] }
+notion-companion = { path = "../../companion/notion-companion", default-features = false, features = [
+    "keyring",
+] }
+serde_json = "1"
+# A tiny synchronous HTTP server — the MCP dispatch is blocking, so no async
+# runtime is needed. Keeps the bridge small and auditable.
+tiny_http = "0.12"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

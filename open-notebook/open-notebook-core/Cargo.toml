@@ -1,0 +1,50 @@
+# open-notebook-core — the merged "Open Notebook" engine (memory, ingestion,
+# studio, agents, MCP) restructured as a clean, injectable Rust library.
+#
+# This is the Phase-0 deliverable of docs/OPEN_NOTEBOOK.md: the fork is a
+# workspace-member *library* with no GUI/WebView dependencies, a `NotebookStorage`
+# trait so the host injects an already-unlocked database (the crate never runs
+# Argon2id or manages SQLCipher keys itself), and dependency versions aligned
+# with `notion_core` (rusqlite 0.32 / serde 1 / thiserror 2) so the unified Tauri
+# binary links one copy of SQLCipher.
+#
+# It mirrors `notion_core`/`notion-companion`'s feature layout: everything that
+# touches SQLCipher hangs off the `sqlcipher` feature (on by default) so the fast
+# `cargo test --no-default-features` workspace job stays a pure-logic build. The
+# real Ollama HTTP gateway is behind `ollama-http`.
+[package]
+name = "open-notebook-core"
+version = "0.1.0"
+edition = "2021"
+description = "Injectable memory/ingestion/studio/agent/MCP engine sharing the main app's encrypted SQLite database."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+name = "open_notebook_core"
+crate-type = ["lib"]
+
+[features]
+default = ["sqlcipher"]
+# The rusqlite-backed `SqliteStorage` that opens the shared encrypted DB.
+sqlcipher = ["dep:rusqlite"]
+# Real Ollama chat + embeddings client (runtime needs Ollama on localhost:11434).
+ollama-http = ["dep:reqwest"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# Same rusqlite + bundled SQLCipher as `notion_core` so the merged binary links a
+# single libsqlite3-sys. Optional: the pure logic (MemStorage + all services with
+# fakes) compiles and is unit-tested without it.
+rusqlite = { version = "0.32", features = [
+    "bundled-sqlcipher-vendored-openssl",
+], optional = true }
+
+# Ollama is plain http on localhost, so no TLS backend is pulled in.
+reqwest = { version = "0.12", optional = true, default-features = false, features = [
+    "blocking",
+    "json",
+] }

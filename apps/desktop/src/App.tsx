@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPage, deletePage, listPages, lockVault, renamePage, type PageDto } from "./bridge";
+import {
+  createPage,
+  deletePage,
+  ingestText,
+  listPages,
+  lockVault,
+  notebookEnabled,
+  renamePage,
+  type PageDto,
+} from "./bridge";
 import { genId } from "./crdt/blocks";
+import { planDrop } from "./ai/actions";
 import { usePageDoc } from "./crdt/usePageDoc";
+import { AiDialog } from "./components/AiDialog";
+import { AIStudio } from "./components/AIStudio";
 import { Editor } from "./components/Editor";
 import { Sidebar } from "./components/Sidebar";
 import { VaultGate } from "./components/VaultGate";
@@ -16,6 +28,14 @@ export function App() {
   const [pages, setPages] = useState<PageDto[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const { doc, ready } = usePageDoc(activeId);
+  // Open Notebook AI (only when the backend reports the flag is on).
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [aiDialog, setAiDialog] = useState<{ open: boolean; prompt: string; blockId?: string }>({
+    open: false,
+    prompt: "",
+  });
+  const [dropMsg, setDropMsg] = useState<string | null>(null);
   // A pending title rename is keyed by page id so a fast page switch flushes the
   // outgoing page's edit instead of firing it against the newly-selected page.
   const pendingRename = useRef<{ id: string; title: string } | null>(null);
@@ -35,7 +55,8 @@ export function App() {
     return list;
   }, []);
 
-  // On unlock, load pages and select (or create) a first page.
+  // On unlock, load pages and select (or create) a first page, and learn whether
+  // the Open Notebook AI features are enabled in the backend.
   useEffect(() => {
     if (!unlocked) return;
     void (async () => {
@@ -47,7 +68,49 @@ export function App() {
       }
       setActiveId((cur) => cur ?? list[0].id);
     })().catch((err) => console.error(err));
+    void notebookEnabled()
+      .then(setAiEnabled)
+      .catch(() => setAiEnabled(false));
   }, [unlocked, refreshPages]);
+
+  // Flash a transient drop message, then clear it.
+  useEffect(() => {
+    if (!dropMsg) return;
+    const t = setTimeout(() => setDropMsg(null), 3500);
+    return () => clearTimeout(t);
+  }, [dropMsg]);
+
+  const onAskAI = useCallback((blockId: string, blockText: string) => {
+    setAiDialog({ open: true, prompt: blockText, blockId });
+  }, []);
+
+  // Drag-and-drop ingestion: text and .txt/.md files go into the knowledge base.
+  const onDrop = useCallback(
+    async (e: React.DragEvent) => {
+      if (!aiEnabled) return;
+      e.preventDefault();
+      const text = e.dataTransfer.getData("text/plain");
+      const files = Array.from(e.dataTransfer.files);
+      const plan = planDrop(text, files);
+      try {
+        if (plan.action === "ingest-text") {
+          await ingestText(plan.text);
+          setDropMsg("Ingested dropped text ✨");
+        } else if (plan.action === "ingest-files") {
+          for (const file of plan.files) {
+            await ingestText(await file.text());
+          }
+          setDropMsg(`Ingested ${plan.files.length} file(s) ✨`);
+        } else {
+          setDropMsg(plan.reason);
+        }
+      } catch (err) {
+        console.error(err);
+        setDropMsg("Ingestion failed.");
+      }
+    },
+    [aiEnabled],
+  );
 
   const activePage = pages.find((p) => p.id === activeId) ?? null;
 
@@ -98,6 +161,8 @@ export function App() {
     setUnlocked(false);
     setPages([]);
     setActiveId(null);
+    setStudioOpen(false);
+    setAiDialog({ open: false, prompt: "" });
   }, [flushRename]);
 
   if (!unlocked) {
@@ -105,7 +170,11 @@ export function App() {
   }
 
   return (
-    <div className="workspace">
+    <div
+      className="workspace"
+      onDragOver={aiEnabled ? (e) => e.preventDefault() : undefined}
+      onDrop={aiEnabled ? (e) => void onDrop(e) : undefined}
+    >
       <Sidebar
         pages={pages}
         activeId={activeId}
@@ -122,11 +191,52 @@ export function App() {
             pageId={activePage.id}
             title={activePage.title}
             onTitleChange={onTitleChange}
+            aiEnabled={aiEnabled}
+            onAskAI={onAskAI}
           />
         ) : (
           <div className="empty-main">{activeId ? "Loading…" : "Select or create a page."}</div>
         )}
       </main>
+
+      {aiEnabled && (
+        <>
+          {studioOpen && (
+            <AIStudio
+              open={studioOpen}
+              onClose={() => setStudioOpen(false)}
+              onOpenSource={(id) => {
+                // If the hit is a known page, open it.
+                if (pages.some((p) => p.id === id)) setActiveId(id);
+              }}
+            />
+          )}
+          <button
+            type="button"
+            className="ai-fab"
+            title="Ask AI ✨"
+            onClick={() => setAiDialog({ open: true, prompt: "" })}
+          >
+            ✨
+          </button>
+          <button
+            type="button"
+            className="ai-studio-toggle"
+            title="Open AI Studio"
+            onClick={() => setStudioOpen((v) => !v)}
+          >
+            AI
+          </button>
+          <AiDialog
+            open={aiDialog.open}
+            initialPrompt={aiDialog.prompt}
+            blockId={aiDialog.blockId}
+            onClose={() => setAiDialog({ open: false, prompt: "" })}
+            onDone={() => void refreshPages()}
+          />
+          {dropMsg && <div className="ai-toast">{dropMsg}</div>}
+        </>
+      )}
     </div>
   );
 }

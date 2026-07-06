@@ -5,6 +5,7 @@
 //! happens here in Rust (audit §2.6) and only decrypted *content*, sanitized
 //! HTML, or opaque bytes cross back to JS.
 
+mod ai;
 mod commands;
 mod state;
 mod vault;
@@ -40,6 +41,16 @@ fn main() {
             commands::take_snapshot,
             commands::sanitize_html,
             commands::sandboxed_embed,
+            // Open Notebook AI (gated by ENABLE_OPEN_NOTEBOOK)
+            ai::notebook_enabled,
+            ai::semantic_search,
+            ai::reindex_page,
+            ai::ingest_text,
+            ai::list_sources,
+            ai::run_agent,
+            ai::studio_summarize,
+            ai::studio_transform,
+            ai::list_agent_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Notion desktop app");
