@@ -359,3 +359,96 @@ The audit requires choosing a collaboration model first. Per its recommendation
 we adopt **Option C**: ship single-user/multi-device (A), but architect the
 CRDT + key design to be collaboration-ready (identity keypair, wrapped DEK,
 opaque sync updates). Recorded in `docs/ARCHITECTURE.md §0`.
+
+---
+
+## 🖥️ Desktop build-out — second adversarial review (vault, commands, editor)
+
+Turning the tested core into a running Tauri app added new code: the vault
+lifecycle (`vault.rs`), the Tauri command surface (`commands.rs`/`state.rs`),
+and the CRDT block editor (`crdt/blocks.ts`, `textdiff.ts`, `components/Editor.tsx`,
+`App.tsx`). A fresh 4-dimension adversarial review (crypto/vault, Tauri surface,
+editor/CRDT, persistence) with independent per-finding verification confirmed
+8 defects. All were fixed and are covered by tests where testable.
+
+### 🐞 [MED] create() wrote `notion.db` before `vault.json`, bricking the vault on a mid-create failure
+
+- **Where:** `apps/desktop/src-tauri/src/vault.rs`, `create`.
+- **Defect:** the DB (keyed by the fresh DEK) was created **before** `vault.json`
+  — the only durable copy of the wrapped DEK — was written. If the metadata write
+  failed (ENOSPC) or the process was killed in between, an encrypted `notion.db`
+  was stranded under a DEK whose wraps never hit disk. Because `exists()` keys off
+  `vault.json`, the app offered "create" again, and opening the leftover DB with a
+  new DEK failed `file is not a database` forever.
+- **Fix:** persist `vault.json` **first**, then open/create the DB. A crash after
+  the meta write leaves `exists() == true`, and `unlock()` re-derives the same DEK
+  from the password wrap and creates the DB with the correct key on next run.
+
+### 🐞 [MED] `write_meta` had no fsync — power loss could truncate the sole copy of the wrapped DEK
+
+- **Where:** `vault.rs`, `write_meta`.
+- **Defect:** temp-file-then-rename gives atomicity against an app crash, but with
+  no `fsync` the rename can reach disk before the temp file's bytes, so power loss
+  could leave a truncated `vault.json`. Since it holds both DEK wraps, that means
+  permanent, silent loss of the whole database.
+- **Fix:** `File::sync_all()` the temp file before the rename, and fsync the
+  containing directory after it, so the bytes are durable before the name flips.
+
+### 🐞 [MED] Caret offset diverged from the model on multi-line blocks (wrong split/merge index)
+
+- **Where:** `components/Editor.tsx`.
+- **Defect:** the model was fed from `innerText` (which renders `<br>` as `\n`) but
+  the caret was measured with `Range.toString()` (which drops `<br>`). A soft line
+  break made the two disagree, so Enter split/merge cut at the wrong index and lost
+  a character.
+- **Fix:** the block is now a strict single text node — read/write via
+  `textContent` (never `innerText`), and intercept every key that would insert a
+  `<br>`. Offsets measured with `Range.toString()` and the `textContent` model now
+  always line up.
+
+### 🐞 [MED] Keydown ignored IME composition (Enter/Backspace hijacked from the IME)
+
+- **Where:** `components/Editor.tsx`, `onKeyDown`.
+- **Defect:** pressing Enter to confirm a CJK/IME candidate split the block; a
+  mid-composition Backspace merged blocks.
+- **Fix:** early-return while `e.nativeEvent.isComposing || e.keyCode === 229`, so
+  the IME keeps those keys.
+
+### 🐞 [MED] `delete_page` could leave orphaned encrypted rows (async flush race)
+
+- **Where:** `core/src/db.rs` (schema) + persistence flush.
+- **Defect:** a debounced update/snapshot flush landing **after** a page was
+  deleted re-inserted encrypted rows for a now-dead `doc_id`, orphaning them.
+- **Fix:** `sync_updates.doc_id` and `doc_snapshots.doc_id` now
+  `REFERENCES pages(id) ON DELETE CASCADE` (foreign_keys is ON). A late flush fails
+  the INSERT (surfaced via `onError`, harmlessly dropped since the provider is
+  destroyed) and deleting a page cascades to its updates + snapshots. Regression
+  tests: `append_for_missing_page_is_rejected`,
+  `deleting_page_cascades_to_updates_and_snapshots`.
+
+### 🐞 [MED] Shared rename timer dropped the previous page's title edit on fast switch
+
+- **Where:** `apps/desktop/src/App.tsx`.
+- **Defect:** one debounce timer + a closure over `activeId` meant switching pages
+  within the debounce window fired the rename against the **new** page (or dropped
+  it), silently losing the previous page's title edit.
+- **Fix:** the pending rename is stored keyed by page id and flushed immediately on
+  `activeId` change / unmount / lock.
+
+### 🐞 [MED] Enter in a code block ended the block instead of inserting a newline
+
+- **Where:** `components/Editor.tsx` + `crdt/blocks.ts`.
+- **Defect:** Enter always split, and `codeBlock` was not a "continues" type, so a
+  code block could not contain multiple lines via Enter.
+- **Fix:** in a code block Enter inserts a `\n` (Shift+Enter is the escape hatch);
+  Shift+Enter is a soft line break in other block types. Newlines go through the
+  model as literal `\n` in the single text node.
+
+### 🐞 [LOW] DEK-derived sync key was held/cleared as a non-zeroizing `[u8; 32]`
+
+- **Where:** `apps/desktop/src-tauri/src/state.rs`, `vault.rs`.
+- **Defect:** the sync-AEAD key (copied out of the zeroizing `ContentKeys`) sat in a
+  plain array, contradicting the §2.6 zeroize-on-drop guarantee; locking merely
+  dropped it without wiping.
+- **Fix:** hold it end-to-end in `zeroize::Zeroizing<[u8; 32]>`, so it is wiped on
+  lock/replace/drop.

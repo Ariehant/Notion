@@ -16,7 +16,18 @@ export function App() {
   const [pages, setPages] = useState<PageDto[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const { doc, ready } = usePageDoc(activeId);
+  // A pending title rename is keyed by page id so a fast page switch flushes the
+  // outgoing page's edit instead of firing it against the newly-selected page.
+  const pendingRename = useRef<{ id: string; title: string } | null>(null);
   const renameTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const flushRename = useCallback(() => {
+    clearTimeout(renameTimer.current);
+    const pending = pendingRename.current;
+    if (!pending) return;
+    pendingRename.current = null;
+    void renamePage(pending.id, pending.title).catch((err) => console.error(err));
+  }, []);
 
   const refreshPages = useCallback(async (): Promise<PageDto[]> => {
     const list = await listPages();
@@ -65,15 +76,20 @@ export function App() {
     (title: string) => {
       if (!activeId) return;
       setPages((prev) => prev.map((p) => (p.id === activeId ? { ...p, title } : p)));
+      pendingRename.current = { id: activeId, title };
       clearTimeout(renameTimer.current);
-      renameTimer.current = setTimeout(() => {
-        void renamePage(activeId, title).catch((err) => console.error(err));
-      }, 400);
+      renameTimer.current = setTimeout(flushRename, 400);
     },
-    [activeId],
+    [activeId, flushRename],
   );
 
+  // Flush a pending rename before switching pages or unmounting.
+  useEffect(() => {
+    return () => flushRename();
+  }, [activeId, flushRename]);
+
   const onLock = useCallback(async () => {
+    flushRename();
     try {
       await lockVault();
     } catch (err) {
@@ -82,7 +98,7 @@ export function App() {
     setUnlocked(false);
     setPages([]);
     setActiveId(null);
-  }, []);
+  }, [flushRename]);
 
   if (!unlocked) {
     return <VaultGate onUnlocked={() => setUnlocked(true)} />;

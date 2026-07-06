@@ -20,15 +20,34 @@ import { computeTextDelta, isNoopDelta } from "../crdt/textdiff";
 import { indexPage } from "../bridge";
 
 // --- Caret helpers for plain-text contentEditable blocks -------------------
+//
+// The block is a single text node (we intercept every key that would make the
+// browser insert a <br>/<div>, and we render via textContent), so offsets
+// measured with Range.toString() line up exactly with the Y.Text string.
 
 function caretOffset(el: HTMLElement): number {
   const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return el.innerText.length;
+  if (!sel || sel.rangeCount === 0) return el.textContent?.length ?? 0;
   const range = sel.getRangeAt(0);
   const pre = range.cloneRange();
   pre.selectNodeContents(el);
   pre.setEnd(range.endContainer, range.endOffset);
   return pre.toString().length;
+}
+
+/** The current selection's [start, end) offsets within `el`. */
+function selectionOffsets(el: HTMLElement): { start: number; end: number } {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) {
+    const o = el.textContent?.length ?? 0;
+    return { start: o, end: o };
+  }
+  const range = sel.getRangeAt(0);
+  const pre = range.cloneRange();
+  pre.selectNodeContents(el);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const start = pre.toString().length;
+  return { start, end: start + range.toString().length };
 }
 
 function setCaret(el: HTMLElement, offset: number): void {
@@ -141,26 +160,43 @@ const BlockRow = function BlockRow({
   const { block, type } = item;
   const ytext = blockText(block);
 
-  // Keep the DOM text in sync with the Y.Text, but ONLY when they actually
-  // differ — so our own keystrokes (already in the DOM) never reset the caret.
-  // A layout effect so a freshly mounted block's text is in the DOM *before*
-  // the editor's focus layout effect runs (correct caret after a split).
+  // Keep the DOM text in sync with the Y.Text via textContent (never innerText:
+  // its setter turns "\n" into <br>, which would desync caret offsets). We write
+  // ONLY when the strings differ, so our own keystrokes never reset the caret. A
+  // layout effect so a freshly mounted block's text is in the DOM *before* the
+  // editor's focus layout effect runs (correct caret after a split).
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const sync = () => {
       const s = ytext.toString();
-      if (el.innerText !== s) el.innerText = s;
+      if (el.textContent !== s) el.textContent = s;
     };
     sync();
     ytext.observe(sync);
     return () => ytext.unobserve(sync);
   }, [ytext]);
 
+  // Replace the current selection with `str` at the model level and place the
+  // caret after it — used for paste and soft/code newlines, so clipboard HTML
+  // and browser-inserted <br>s never enter the block (§2.8) and the DOM stays a
+  // single text node.
+  const replaceSelection = useCallback(
+    (el: HTMLDivElement, str: string) => {
+      const { start, end } = selectionOffsets(el);
+      doc.transact(() => {
+        if (end > start) ytext.delete(start, end - start);
+        if (str) ytext.insert(start, str);
+      }, LOCAL_ORIGIN);
+      setCaret(el, start + str.length);
+    },
+    [doc, ytext],
+  );
+
   const onInput = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    const next = el.innerText;
+    const next = el.textContent ?? "";
     const prev = ytext.toString();
     if (next !== prev) {
       const delta = computeTextDelta(prev, next);
@@ -193,10 +229,24 @@ const BlockRow = function BlockRow({
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       const el = ref.current;
       if (!el) return;
+      // Never hijack keys from an in-progress IME composition (Enter confirms a
+      // candidate; Backspace edits it) — let the IME handle them.
+      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
       if (e.key === "Enter" && !e.shiftKey) {
+        // In a code block, Enter is a newline; Shift+Enter is the escape hatch.
+        if (type === "codeBlock") {
+          e.preventDefault();
+          replaceSelection(el, "\n");
+          return;
+        }
         e.preventDefault();
         onCloseSlash();
         onEnter(block, caretOffset(el));
+      } else if (e.key === "Enter" && e.shiftKey) {
+        // Soft line break within the block (stays one block, one text node).
+        e.preventDefault();
+        replaceSelection(el, "\n");
       } else if (e.key === "Backspace") {
         if (caretOffset(el) === 0 && window.getSelection()?.isCollapsed) {
           if (type !== "paragraph") {
@@ -211,15 +261,20 @@ const BlockRow = function BlockRow({
         onCloseSlash();
       }
     },
-    [block, doc, onCloseSlash, onEnter, onMergeBackspace, type],
+    [block, doc, onCloseSlash, onEnter, onMergeBackspace, replaceSelection, type],
   );
 
-  // Plain-text paste only: never inject clipboard HTML into a block (§2.8).
-  const onPaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const text = e.clipboardData.getData("text/plain");
-    if (text) document.execCommand("insertText", false, text);
-  }, []);
+  // Plain-text paste only: never inject clipboard HTML into a block (§2.8). The
+  // text goes through the model, so no browser HTML/<br> reaches the DOM.
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const el = ref.current;
+      const text = e.clipboardData.getData("text/plain");
+      if (el && text) replaceSelection(el, text);
+    },
+    [replaceSelection],
+  );
 
   const setRef = useCallback(
     (el: HTMLDivElement | null) => {

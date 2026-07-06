@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use notion_core::db::EncryptedDb;
+use zeroize::Zeroizing;
 
 /// App-wide state. The encrypted DB handle and the AEAD sync key live here in
 /// Rust and are never exposed to the WebView (audit §2.6). The vault starts
@@ -11,7 +12,8 @@ pub struct AppState {
     pub vault_dir: PathBuf,
     pub db: Mutex<Option<EncryptedDb>>,
     /// The DEK-derived `sync-aead` key used to seal updates before storage.
-    pub sync_key: Mutex<Option<[u8; 32]>>,
+    /// Kept in a zeroizing buffer and wiped on lock/replace (audit §2.6).
+    pub sync_key: Mutex<Option<Zeroizing<[u8; 32]>>>,
 }
 
 impl AppState {

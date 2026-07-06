@@ -21,6 +21,7 @@
 //! re-wraps the DEK (see [`recover`]); it never re-keys the database.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use notion_core::crypto::{
@@ -29,6 +30,7 @@ use notion_core::crypto::{
 use notion_core::db::EncryptedDb;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 const VAULT_FILE: &str = "vault.json";
 const DB_FILE: &str = "notion.db";
@@ -84,7 +86,8 @@ impl VaultMeta {
 /// plus (only on creation) the one-time recovery code to show the user.
 pub struct OpenVault {
     pub db: EncryptedDb,
-    pub sync_key: [u8; 32],
+    /// Held in a zeroizing buffer so the key is wiped on drop (audit §2.6).
+    pub sync_key: Zeroizing<[u8; 32]>,
     pub recovery_code: Option<String>,
 }
 
@@ -109,11 +112,21 @@ fn read_meta(dir: &Path) -> Result<VaultMeta, VaultError> {
 fn write_meta(dir: &Path, meta: &VaultMeta) -> Result<(), VaultError> {
     let json =
         serde_json::to_string_pretty(meta).map_err(|e| VaultError::Corrupt(e.to_string()))?;
-    // Write to a temp file then rename, so a crash mid-write can't leave a
-    // half-written vault.json that would strand the DEK.
+    // Durable atomic replace. vault.json is the ONLY persistent copy of the
+    // wrapped DEK, so we (1) write the temp file and fsync its bytes, (2) rename
+    // it over the real file, (3) fsync the directory so the rename is durable.
+    // Without the fsyncs, power loss could land the rename while the temp bytes
+    // are still buffered, leaving a truncated vault.json and an unrecoverable DB.
     let tmp = vault_path(dir).with_extension("json.tmp");
-    fs::write(&tmp, json)?;
+    {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+    }
     fs::rename(&tmp, vault_path(dir))?;
+    if let Ok(dir_file) = fs::File::open(dir) {
+        let _ = dir_file.sync_all();
+    }
     Ok(())
 }
 
@@ -135,7 +148,7 @@ fn open_db_with_dek(dir: &Path, dek: &DataKey) -> Result<OpenVault, VaultError> 
     let db = EncryptedDb::open(&db_path(dir).to_string_lossy(), &content.sqlcipher_hex())?;
     Ok(OpenVault {
         db,
-        sync_key: content.sync_aead,
+        sync_key: Zeroizing::new(content.sync_aead),
         recovery_code: None,
     })
 }
@@ -168,9 +181,14 @@ pub fn create(dir: &Path, password: &str) -> Result<OpenVault, VaultError> {
         wrapped_dek_recovery_hex: hex::encode(kit.wrapped_dek.to_bytes()),
     };
 
-    let opened = open_db_with_dek(dir, &dek)?;
-    // Persist metadata only after the DB opened cleanly.
+    // Persist the wrapped-DEK metadata FIRST. vault.json is the only durable
+    // copy of the DEK, so if the process dies before the DB is created, the
+    // vault still "exists" and unlock() re-derives the DEK from the password
+    // wrap and creates notion.db with the correct key on the next run. (The old
+    // order could strand an encrypted notion.db whose wraps were never written,
+    // bricking the directory since exists() keys off vault.json.)
     write_meta(dir, &meta)?;
+    let opened = open_db_with_dek(dir, &dek)?;
 
     Ok(OpenVault {
         recovery_code: Some(kit.printable_code),

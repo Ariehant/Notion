@@ -125,9 +125,12 @@ impl EncryptedDb {
                  trashed_at INTEGER
              );
              -- Append-only encrypted CRDT update log (§1.6): flushed async.
+             -- doc_id references its page so (a) deleting a page cascades to its
+             -- updates and (b) a late async flush that lands after the page is
+             -- gone fails the INSERT instead of orphaning encrypted rows.
              CREATE TABLE IF NOT EXISTS sync_updates (
                  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
-                 doc_id     TEXT NOT NULL,
+                 doc_id     TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
                  encoding   INTEGER NOT NULL,
                  sealed     BLOB NOT NULL,
                  created_at INTEGER NOT NULL
@@ -137,7 +140,7 @@ impl EncryptedDb {
              -- Full-document restore points for version history (§1.3).
              CREATE TABLE IF NOT EXISTS doc_snapshots (
                  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                 doc_id     TEXT NOT NULL,
+                 doc_id     TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
                  label      TEXT,
                  sealed     BLOB NOT NULL,
                  created_at INTEGER NOT NULL
@@ -443,6 +446,31 @@ mod tests {
     }
 
     #[test]
+    fn append_for_missing_page_is_rejected() {
+        // The FK (with foreign_keys=ON) means a late async flush that lands
+        // after its page was deleted fails instead of orphaning encrypted rows.
+        let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        assert!(db
+            .append_update("ghost", UpdateEncoding::V1, b"x", 1)
+            .is_err());
+        assert!(db.save_snapshot("ghost", None, b"x", 1).is_err());
+    }
+
+    #[test]
+    fn deleting_page_cascades_to_updates_and_snapshots() {
+        let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.create_page("p1", "t", 1).unwrap();
+        db.append_update("p1", UpdateEncoding::V1, b"u", 1).unwrap();
+        db.save_snapshot("p1", None, b"s", 1).unwrap();
+        // Delete only the page row; the FK cascade removes its children.
+        db.conn
+            .execute("DELETE FROM pages WHERE id = 'p1'", [])
+            .unwrap();
+        assert!(db.load_updates("p1").unwrap().is_empty());
+        assert!(db.list_snapshots("p1").unwrap().is_empty());
+    }
+
+    #[test]
     fn delete_page_purges_all_page_data() {
         let db = EncryptedDb::open_in_memory(KEY).unwrap();
         db.create_page("p1", "Doomed", 1).unwrap();
@@ -461,6 +489,8 @@ mod tests {
     #[test]
     fn update_log_round_trips() {
         let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.create_page("doc1", "d1", 1).unwrap();
+        db.create_page("doc2", "d2", 1).unwrap();
         db.append_update("doc1", UpdateEncoding::V1, b"sealed-a", 1000)
             .unwrap();
         db.append_update("doc1", UpdateEncoding::V1, b"sealed-b", 1001)
@@ -478,6 +508,7 @@ mod tests {
     #[test]
     fn snapshots_round_trip_newest_first() {
         let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.create_page("doc1", "d1", 1).unwrap();
         db.save_snapshot("doc1", Some("autosave"), b"snap-1", 100)
             .unwrap();
         db.save_snapshot("doc1", None, b"snap-2", 200).unwrap();
@@ -515,6 +546,7 @@ mod tests {
         let _guard = TempDb(path.clone());
         {
             let db = EncryptedDb::open(&path, KEY).unwrap();
+            db.create_page("doc1", "d1", 1).unwrap();
             db.append_update("doc1", UpdateEncoding::V1, b"persisted", 1)
                 .unwrap();
         }
@@ -551,6 +583,7 @@ mod tests {
         // A corrupt/tampered row with encoding 257 must NOT be mis-decoded as V1
         // (257 as u8 == 1). Validated before narrowing (§ review #8).
         let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.create_page("d", "d", 1).unwrap();
         db.conn
             .execute(
                 "INSERT INTO sync_updates(doc_id, encoding, sealed, created_at)
