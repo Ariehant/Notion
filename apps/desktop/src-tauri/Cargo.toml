@@ -1,0 +1,24 @@
+# NOTE: This crate is intentionally OUTSIDE the root Cargo workspace and is NOT
+# built in CI. The `tauri` crate requires GUI system libraries (WebKitGTK on
+# Linux) to compile, which are not present in the headless CI image. All logic
+# lives in `notion_core` (which IS tested in CI); this is a thin command layer.
+[workspace]
+
+[package]
+name = "notion-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri desktop shell for the offline-first Notion-like app."
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+notion_core = { path = "../../../core" }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

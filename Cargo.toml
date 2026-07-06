@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["core"]
+exclude = ["apps/desktop/src-tauri"]
+
+# apps/desktop/src-tauri is intentionally NOT a workspace member: the `tauri`
+# crate requires GUI system libraries (WebKitGTK on Linux) to *build*, which are
+# not present in headless CI. The `core` crate carries all business logic and is
+# fully compiled + tested in CI. See docs/ARCHITECTURE.md.
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

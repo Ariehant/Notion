@@ -1,0 +1,36 @@
+# Rust
+/target
+**/target
+Cargo.lock.orig
+
+# Node / pnpm
+node_modules/
+.pnp.*
+dist/
+dist-ssr/
+*.local
+.vite/
+coverage/
+
+# Tauri build output
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Local secrets / dbs (never commit)
+*.db
+*.db-wal
+*.db-shm
+*.key
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log

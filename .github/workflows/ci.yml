@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-core:
+    name: Rust core (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy (fast, no SQLCipher build)
+        run: cargo clippy --no-default-features --all-targets -- -D warnings
+      - name: test (fast layers)
+        run: cargo test --no-default-features
+      - name: test (with bundled SQLCipher — proves encrypted-at-rest path)
+        run: cargo test
+
+  frontend:
+    name: Frontend (typecheck, lint, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: prettier
+        run: pnpm format:check
+      - name: typecheck
+        run: pnpm -r typecheck
+      - name: lint
+        run: pnpm -r lint
+      - name: test
+        run: pnpm -r test
