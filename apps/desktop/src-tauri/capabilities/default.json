@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core capability granted to the main application window. Only core Tauri functionality is enabled; no remote/shell/fs plugins are exposed to the WebView (audit §2.6/§2.8).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

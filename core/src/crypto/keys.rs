@@ -62,6 +62,35 @@ impl DataKey {
             .map_err(|_| CryptoError::InvalidKey)?;
         Ok(DataKey(arr))
     }
+
+    /// Derive the at-rest content keys **from the DEK** (not the password).
+    ///
+    /// This is what makes the DEK the true root of content protection (§2.1):
+    /// SQLCipher's page-encryption key and the sync-update AEAD key both hang off
+    /// the DEK via HKDF with distinct `info` labels, so changing the password only
+    /// re-wraps the DEK — it never re-keys the database or re-seals the log.
+    pub fn content_keys(&self) -> ContentKeys {
+        ContentKeys {
+            sqlcipher: hkdf_subkey(&self.0, b"notion.v1.dek.sqlcipher"),
+            sync_aead: hkdf_subkey(&self.0, b"notion.v1.dek.sync-aead"),
+        }
+    }
+}
+
+/// The two at-rest content keys derived from the DEK. Zeroized on drop.
+#[derive(Zeroize, ZeroizeOnDrop)]
+pub struct ContentKeys {
+    /// Raw 256-bit key handed to SQLCipher (`PRAGMA key = "x'..'"`).
+    pub sqlcipher: [u8; KEY_LEN],
+    /// Key used to seal/open sync-update log entries.
+    pub sync_aead: [u8; KEY_LEN],
+}
+
+impl ContentKeys {
+    /// The SQLCipher key as the 64-char lowercase hex SQLCipher expects.
+    pub fn sqlcipher_hex(&self) -> String {
+        hex::encode(self.sqlcipher)
+    }
 }
 
 /// A device's X25519 public key (shareable), 32 bytes.
@@ -276,6 +305,25 @@ mod tests {
             DataKey::generate().as_bytes(),
             DataKey::generate().as_bytes()
         );
+    }
+
+    #[test]
+    fn content_keys_are_dek_rooted_distinct_and_stable() {
+        let dek = DataKey::generate();
+        let a = dek.content_keys();
+        let b = dek.content_keys();
+        // Stable for a given DEK (so the DB reopens with the same key).
+        assert_eq!(a.sqlcipher, b.sqlcipher);
+        assert_eq!(a.sync_aead, b.sync_aead);
+        // The two purposes are cryptographically separated (§2.2).
+        assert_ne!(a.sqlcipher, a.sync_aead);
+        // A different DEK yields different content keys (rooted in the DEK).
+        let other = DataKey::generate().content_keys();
+        assert_ne!(a.sqlcipher, other.sqlcipher);
+        // SQLCipher hex is exactly 64 lowercase hex chars.
+        let hex = a.sqlcipher_hex();
+        assert_eq!(hex.len(), 64);
+        assert!(hex.bytes().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

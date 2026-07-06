@@ -1,40 +1,116 @@
-import { useEffect, useState } from "react";
-import * as Y from "yjs";
-import { BatchedPersistence } from "./crdt/persistence";
-import { SnapshotScheduler } from "./snapshots/scheduler";
-import { starredGapBlocks } from "./blocks/schema";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPage, deletePage, listPages, lockVault, renamePage, type PageDto } from "./bridge";
+import { genId } from "./crdt/blocks";
+import { usePageDoc } from "./crdt/usePageDoc";
+import { Editor } from "./components/Editor";
+import { Sidebar } from "./components/Sidebar";
+import { VaultGate } from "./components/VaultGate";
 
 /**
- * Minimal app shell. The real editor (BlockNote + custom blocks) lands in
- * Phase 1; this wires the corrected architecture end to end: a Yjs doc as the
- * fast path with async batched persistence (§1.6) and scheduled snapshots
- * (§1.3). The heavy WebKitGTK build is documented in docs/ARCHITECTURE.md.
+ * App shell. Below the vault gate it wires the corrected architecture end to
+ * end: pages in the encrypted DB, each page body a Yjs doc with async batched
+ * persistence (§1.6), scheduled snapshots (§1.3), and one HTML sanitizer path.
  */
 export function App() {
-  const [ready, setReady] = useState(false);
+  const [unlocked, setUnlocked] = useState(false);
+  const [pages, setPages] = useState<PageDto[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const { doc, ready } = usePageDoc(activeId);
+  const renameTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  useEffect(() => {
-    const doc = new Y.Doc();
-    // In the running app the sink is `tauriPersistSink` from ./bridge; here we
-    // just prove the wiring compiles and initializes.
-    const sink = { flush: async () => {} };
-    const persistence = new BatchedPersistence("welcome", doc, sink);
-    const scheduler = new SnapshotScheduler();
-    scheduler.recordUpdates(0);
-    setReady(true);
-    return () => void persistence.destroy();
+  const refreshPages = useCallback(async (): Promise<PageDto[]> => {
+    const list = await listPages();
+    setPages(list);
+    return list;
   }, []);
 
+  // On unlock, load pages and select (or create) a first page.
+  useEffect(() => {
+    if (!unlocked) return;
+    void (async () => {
+      let list = await refreshPages();
+      if (list.length === 0) {
+        const page = await createPage(genId(), "Untitled");
+        list = [page];
+        setPages(list);
+      }
+      setActiveId((cur) => cur ?? list[0].id);
+    })().catch((err) => console.error(err));
+  }, [unlocked, refreshPages]);
+
+  const activePage = pages.find((p) => p.id === activeId) ?? null;
+
+  const onCreate = useCallback(async () => {
+    try {
+      const page = await createPage(genId(), "Untitled");
+      setPages((prev) => [page, ...prev]);
+      setActiveId(page.id);
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
+  const onDelete = useCallback(async (id: string) => {
+    try {
+      await deletePage(id);
+      const list = await listPages();
+      setPages(list);
+      setActiveId((cur) => (cur === id ? (list[0]?.id ?? null) : cur));
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
+  const onTitleChange = useCallback(
+    (title: string) => {
+      if (!activeId) return;
+      setPages((prev) => prev.map((p) => (p.id === activeId ? { ...p, title } : p)));
+      clearTimeout(renameTimer.current);
+      renameTimer.current = setTimeout(() => {
+        void renamePage(activeId, title).catch((err) => console.error(err));
+      }, 400);
+    },
+    [activeId],
+  );
+
+  const onLock = useCallback(async () => {
+    try {
+      await lockVault();
+    } catch (err) {
+      console.error(err);
+    }
+    setUnlocked(false);
+    setPages([]);
+    setActiveId(null);
+  }, []);
+
+  if (!unlocked) {
+    return <VaultGate onUnlocked={() => setUnlocked(true)} />;
+  }
+
   return (
-    <main style={{ fontFamily: "system-ui", padding: "2rem" }}>
-      <h1>Offline-first Notion</h1>
-      <p>Status: {ready ? "core initialized" : "loading…"}</p>
-      <p>Custom blocks queued for Phase 1:</p>
-      <ul>
-        {starredGapBlocks().map((b) => (
-          <li key={b.type}>{b.label}</li>
-        ))}
-      </ul>
-    </main>
+    <div className="workspace">
+      <Sidebar
+        pages={pages}
+        activeId={activeId}
+        onSelect={setActiveId}
+        onCreate={onCreate}
+        onDelete={onDelete}
+        onLock={onLock}
+      />
+      <main className="main-pane">
+        {activePage && doc && ready ? (
+          <Editor
+            key={activePage.id}
+            doc={doc}
+            pageId={activePage.id}
+            title={activePage.title}
+            onTitleChange={onTitleChange}
+          />
+        ) : (
+          <div className="empty-main">{activeId ? "Loading…" : "Select or create a page."}</div>
+        )}
+      </main>
+    </div>
   );
 }

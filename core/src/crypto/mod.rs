@@ -29,7 +29,8 @@ mod recovery;
 pub use aead::{open, open_with_aad, seal, seal_with_aad, SealedBox, NONCE_LEN, TAG_LEN};
 pub use kdf::{derive_master_key, subkeys, Argon2Params, MasterKey, SubKeys, SubkeyLabel};
 pub use keys::{
-    DataKey, DeviceKeypair, DevicePublicKey, IdentityKeypair, IdentityPublicKey, WrappedDek,
+    ContentKeys, DataKey, DeviceKeypair, DevicePublicKey, IdentityKeypair, IdentityPublicKey,
+    WrappedDek,
 };
 pub use pairing::{
     sas_code, verify_commitment, PairingCommitment, PairingContribution, PairingGrant, SAS_WORDS,

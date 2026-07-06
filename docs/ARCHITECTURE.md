@@ -96,6 +96,46 @@ All key material is `Zeroize`/`ZeroizeOnDrop` and never crosses into JS.
 - Embeds render only as **sandboxed** iframes (never `allow-scripts` +
   `allow-same-origin` together), https-only + SSRF-guarded src, no Tauri IPC.
 
+## Vault lifecycle & the DEK as root key (§2.1, §2.5)
+
+The desktop shell stores a vault as two files in the OS app-data directory:
+
+- `notion.db` — the SQLCipher-encrypted database.
+- `vault.json` — **non-secret** metadata: the Argon2id salt + params and the DEK
+  wrapped two ways (under the password path and under the recovery key). Salts
+  are public by design and the wrapped DEKs are ciphertext, so this is safe in
+  the clear. It is written temp-file-then-rename so a crash can't strand the DEK.
+
+The DEK — not the password — is the root of content encryption:
+
+```
+password ─Argon2id(salt)→ master ─HKDF→ dek_wrap subkey ─┐
+                                                         ├─ unwrap ─▶ DEK
+recovery code ────────────HKDF───────────────────────────┘
+
+DEK ─HKDF("…dek.sqlcipher")→ raw SQLCipher key
+    └HKDF("…dek.sync-aead")→ update-sealing AEAD key
+```
+
+Consequences: **unlock** derives the DEK from the password and opens the DB with
+DEK-derived keys; a wrong password fails the DEK unwrap (a clean `BadPassword`,
+not an oracle). **recover** unwraps the DEK with the recovery code and re-wraps
+it under a freshly salted new password — the DB and update log are untouched.
+This is exercised end-to-end by `vault.rs` tests (create → persist → unlock →
+recover, plus wrong-password/code rejection).
+
+## Editor & the Yjs binding (§1.4)
+
+The page body is a `Y.Array` of block `Y.Map`s, each holding a `Y.Text`. The
+`contentEditable` binding pushes DOM→Yjs as a **minimal single-range diff**
+(`computeTextDelta`) so a keystroke is one CRDT op, not a clear-and-reinsert, and
+syncs Yjs→DOM only when the strings actually differ (so local typing never resets
+the caret). Structural ops (Enter split, Backspace merge, markdown/slash type
+changes) run in `LOCAL_ORIGIN` transactions; `observeDeep` re-renders the list
+only on structural events, not on text-only ones. Paste inserts plain text only
+— clipboard HTML never becomes DOM markup — while the audited Rust sanitizer
+remains the path for scraped/rich HTML and embeds.
+
 ## Deferred (scoped, not built here)
 
 - **Vector search (§1.7):** one engine, `sqlite-vec` statically linked — Phase 4.

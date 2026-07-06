@@ -37,6 +37,15 @@ pub enum DbError {
     UnknownEncoding(u8),
 }
 
+/// Metadata for a page (the container whose body is a CRDT document).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageMeta {
+    pub id: String,
+    pub title: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
 /// A stored, encoding-tagged CRDT update read back from the log.
 #[derive(Debug, Clone)]
 pub struct StoredUpdate {
@@ -154,6 +163,80 @@ impl EncryptedDb {
     /// (2 = MEMORY). Used by tests to prove no plaintext temp spill.
     pub fn temp_store(&self) -> Result<i64, DbError> {
         Ok(self.conn.query_row("PRAGMA temp_store", [], |r| r.get(0))?)
+    }
+
+    /// Create a page row. The page id doubles as its CRDT document id.
+    pub fn create_page(&self, id: &str, title: &str, now_ms: i64) -> Result<(), DbError> {
+        self.conn.execute(
+            "INSERT INTO pages(id, parent_id, title, created_at, updated_at)
+             VALUES (?1, NULL, ?2, ?3, ?3)",
+            params![id, title, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// List non-trashed pages, most-recently-updated first.
+    pub fn list_pages(&self) -> Result<Vec<PageMeta>, DbError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, created_at, updated_at
+               FROM pages WHERE trashed_at IS NULL
+               ORDER BY updated_at DESC, id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(PageMeta {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                created_at_ms: row.get(2)?,
+                updated_at_ms: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Rename a page and bump its `updated_at`.
+    pub fn rename_page(&self, id: &str, title: &str, now_ms: i64) -> Result<(), DbError> {
+        self.conn.execute(
+            "UPDATE pages SET title = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, title, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Bump a page's `updated_at` (called when its body changes).
+    pub fn touch_page(&self, id: &str, now_ms: i64) -> Result<(), DbError> {
+        self.conn.execute(
+            "UPDATE pages SET updated_at = ?2 WHERE id = ?1",
+            params![id, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Permanently delete a page and everything belonging to it: its CRDT
+    /// update log, its snapshots, and its search-index row. Runs in one
+    /// transaction so a page never half-exists.
+    pub fn delete_page(&self, id: &str) -> Result<(), DbError> {
+        self.conn.execute_batch("BEGIN;")?;
+        let result = (|| -> Result<(), DbError> {
+            self.conn
+                .execute("DELETE FROM sync_updates WHERE doc_id = ?1", params![id])?;
+            self.conn
+                .execute("DELETE FROM doc_snapshots WHERE doc_id = ?1", params![id])?;
+            self.conn
+                .execute("DELETE FROM page_search WHERE page_id = ?1", params![id])?;
+            self.conn
+                .execute("DELETE FROM pages WHERE id = ?1", params![id])?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.conn.execute_batch("COMMIT;")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
     }
 
     /// Append an opaque, encoding-tagged sealed update to the log (§1.6).
@@ -337,6 +420,42 @@ mod tests {
         // §1.8: proves transient data won't spill to plaintext temp files.
         let db = EncryptedDb::open_in_memory(KEY).unwrap();
         assert_eq!(db.temp_store().unwrap(), 2); // 2 == MEMORY
+    }
+
+    #[test]
+    fn page_crud_round_trips() {
+        let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.create_page("p1", "First", 100).unwrap();
+        db.create_page("p2", "Second", 200).unwrap();
+
+        // Newest-updated first.
+        let pages = db.list_pages().unwrap();
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].id, "p2");
+        assert_eq!(pages[1].title, "First");
+
+        // Rename bumps updated_at, reordering the list.
+        db.rename_page("p1", "First (renamed)", 300).unwrap();
+        let pages = db.list_pages().unwrap();
+        assert_eq!(pages[0].id, "p1");
+        assert_eq!(pages[0].title, "First (renamed)");
+        assert_eq!(pages[0].updated_at_ms, 300);
+    }
+
+    #[test]
+    fn delete_page_purges_all_page_data() {
+        let db = EncryptedDb::open_in_memory(KEY).unwrap();
+        db.create_page("p1", "Doomed", 1).unwrap();
+        db.append_update("p1", UpdateEncoding::V1, b"u", 2).unwrap();
+        db.save_snapshot("p1", None, b"s", 3).unwrap();
+        db.index_page("p1", "Doomed", "secret body").unwrap();
+
+        db.delete_page("p1").unwrap();
+
+        assert!(db.list_pages().unwrap().is_empty());
+        assert!(db.load_updates("p1").unwrap().is_empty());
+        assert!(db.list_snapshots("p1").unwrap().is_empty());
+        assert!(db.search("secret").unwrap().is_empty());
     }
 
     #[test]
