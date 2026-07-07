@@ -228,8 +228,8 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// A best-effort unique id without pulling in a UUID dependency: nanosecond
-/// clock ⊕ pid, hex-encoded. Uniqueness is sufficient for one interactive CLI.
+/// A best-effort unique id without pulling in a UUID dependency: the process id
+/// combined with the nanosecond clock. Sufficient for one interactive CLI.
 fn new_id(prefix: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

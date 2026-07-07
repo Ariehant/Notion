@@ -23,10 +23,10 @@ pub trait Embedder {
 
 /// A deterministic, dependency-free embedder using the feature-hashing trick.
 ///
-/// Each token is hashed twice: once to pick a dimension, once (a sign bit) to
-/// pick +1/-1, which halves the expected collision bias. The accumulated vector
-/// is L2-normalized so cosine similarity reduces to a dot product and document
-/// length does not dominate the score.
+/// Each token is hashed once; the low bits pick a dimension and a high bit picks
+/// the +1/-1 sign, which halves the expected collision bias. The accumulated
+/// vector is L2-normalized so cosine similarity reduces to a dot product and
+/// document length does not dominate the score.
 #[derive(Debug, Clone)]
 pub struct HashingEmbedder {
     dim: usize,

@@ -167,17 +167,19 @@ fn call_tool<E: Embedder>(
         "add_event" => {
             let title = str_arg(args, "title")?;
             let start_time = int_arg(args, "start_time")?;
-            // Saturating: start_time is caller-supplied, so `+ 3600` must not
-            // overflow on an extreme value.
-            let end_time = args
-                .get("end_time")
-                .and_then(Value::as_i64)
-                .filter(|&e| e > start_time)
-                .unwrap_or(start_time.saturating_add(3600));
             let all_day = args
                 .get("all_day")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            // Default duration mirrors the agent path: a full day for all-day
+            // events, otherwise one hour. Saturating so a caller-supplied extreme
+            // start_time can't overflow.
+            let default_len: i64 = if all_day { 86_400 } else { 3_600 };
+            let end_time = args
+                .get("end_time")
+                .and_then(Value::as_i64)
+                .filter(|&e| e > start_time)
+                .unwrap_or(start_time.saturating_add(default_len));
             let location = args
                 .get("location")
                 .and_then(Value::as_str)
@@ -306,7 +308,27 @@ mod tests {
         assert_eq!(store.event_count(), 1);
         let ev = &store.events()[0];
         assert_eq!(ev.title, "Sync");
-        assert_eq!(ev.end_time, 1000 + 3600); // defaulted
+        assert_eq!(ev.end_time, 1000 + 3600); // defaulted to one hour
+    }
+
+    #[test]
+    fn add_event_all_day_defaults_to_a_full_day() {
+        // Mirrors the agent path: an all-day event with no end spans a full day,
+        // not one hour.
+        let store = MemStorage::new();
+        let mem = memory();
+        handle_request(
+            &store,
+            &mem,
+            &json!({
+                "jsonrpc":"2.0","id":7,"method":"tools/call",
+                "params":{"name":"add_event","arguments":{"title":"Holiday","start_time":1000,"all_day":true}}
+            }),
+            0,
+        );
+        let ev = &store.events()[0];
+        assert!(ev.all_day);
+        assert_eq!(ev.end_time, 1000 + 86_400);
     }
 
     #[test]

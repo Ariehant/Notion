@@ -226,7 +226,9 @@ impl NotebookStorage for MemStorage {
 
     fn list_sources(&self) -> Result<Vec<IngestedSource>, StorageError> {
         let mut v = self.inner.lock().unwrap().sources.clone();
-        v.sort_by(|a, b| b.processed_at.cmp(&a.processed_at));
+        // Match the SQLite backend's `ORDER BY processed_at DESC, id` so the
+        // tested backend and production agree on ties.
+        v.sort_by(|a, b| b.processed_at.cmp(&a.processed_at).then(a.id.cmp(&b.id)));
         Ok(v)
     }
 
@@ -237,7 +239,8 @@ impl NotebookStorage for MemStorage {
 
     fn list_agent_logs(&self, limit: i64) -> Result<Vec<AgentLog>, StorageError> {
         let mut v = self.inner.lock().unwrap().logs.clone();
-        v.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        // Match the SQLite backend's `ORDER BY timestamp DESC, id DESC`.
+        v.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then(b.id.cmp(&a.id)));
         v.truncate(limit.max(0) as usize);
         Ok(v)
     }
@@ -358,7 +361,7 @@ mod sqlite {
             Ok(())
         } else {
             Err(StorageError::Backend(
-                "key must be 64 lowercase hex characters".into(),
+                "key must be 64 hex characters (a 256-bit raw key)".into(),
             ))
         }
     }
@@ -495,7 +498,9 @@ mod sqlite {
                 "SELECT id, agent_type, prompt, action_taken, block_affected, timestamp
                    FROM agent_logs ORDER BY timestamp DESC, id DESC LIMIT ?1",
             )?;
-            let rows = stmt.query_map(params![limit], |row| {
+            // Clamp to >= 0: SQLite treats a negative LIMIT as "unlimited", which
+            // would silently ignore the caller's cap.
+            let rows = stmt.query_map(params![limit.max(0)], |row| {
                 Ok(AgentLog {
                     id: row.get(0)?,
                     agent_type: row.get(1)?,

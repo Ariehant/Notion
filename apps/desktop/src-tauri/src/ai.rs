@@ -83,9 +83,19 @@ fn now_secs() -> i64 {
 }
 
 /// A random 128-bit id, hex-encoded, prefixed for readability in the DB.
+///
+/// If `getrandom` fails (constrained sandbox / early boot), we fall back to a
+/// nanosecond timestamp rather than leaving the buffer all-zero: a constant id
+/// would collide via the tables' `ON CONFLICT` and silently overwrite/drop rows.
 fn new_id(prefix: &str) -> String {
     let mut bytes = [0u8; 16];
-    let _ = getrandom::getrandom(&mut bytes);
+    if getrandom::getrandom(&mut bytes).is_err() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        bytes.copy_from_slice(&nanos.to_le_bytes());
+    }
     format!("{prefix}-{}", hex::encode(bytes))
 }
 

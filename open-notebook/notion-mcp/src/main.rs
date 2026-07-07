@@ -11,6 +11,7 @@
 //! Keyring (or `NOTION_SQLCIPHER_KEY_HEX`), never the DEK root. There is no auth
 //! beyond loopback + the OS keyring, so do not expose the port off-host.
 
+use std::net::ToSocketAddrs;
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -94,11 +95,20 @@ fn mcp_parse_error(msg: &str) -> serde_json::Value {
     serde_json::json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": msg}})
 }
 
-/// Whether `addr` targets loopback (127.0.0.0/8 or `localhost` or `[::1]`).
+/// Whether `addr` binds only loopback. We **resolve** the address the same way
+/// `tiny_http` will (`ToSocketAddrs`) and require *every* resolved socket to be
+/// loopback. A purely textual check (e.g. `starts_with("127.")`) is unsafe: a
+/// hostname like `127.0.0.1.attacker.example` passes a string test but resolves
+/// to a public IP, so the server would bind off-host despite having no auth.
 fn is_loopback(addr: &str) -> bool {
-    let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
-    let host = host.trim_start_matches('[').trim_end_matches(']');
-    host == "localhost" || host == "::1" || host.starts_with("127.")
+    match addr.to_socket_addrs() {
+        Ok(resolved) => {
+            let addrs: Vec<_> = resolved.collect();
+            !addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback())
+        }
+        // Unresolvable / missing port ⇒ refuse (fail closed).
+        Err(_) => false,
+    }
 }
 
 fn resolve_key() -> Result<String, String> {
@@ -120,4 +130,26 @@ fn now_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback;
+
+    #[test]
+    fn accepts_loopback_literals() {
+        assert!(is_loopback("127.0.0.1:8787"));
+        assert!(is_loopback("[::1]:8787"));
+    }
+
+    #[test]
+    fn rejects_non_loopback_and_all_interfaces() {
+        // The all-interfaces bind and any routable literal must be refused.
+        assert!(!is_loopback("0.0.0.0:8787"));
+        assert!(!is_loopback("192.168.1.5:8787"));
+        assert!(!is_loopback("8.8.8.8:8787"));
+        // Missing port / unresolvable ⇒ fail closed.
+        assert!(!is_loopback("127.0.0.1"));
+        assert!(!is_loopback("not a host:8787"));
+    }
 }
