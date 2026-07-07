@@ -37,3 +37,6 @@ companion/gnome-extension/**/schemas/gschemas.compiled
 
 # Logs
 *.log
+
+# Vercel (local CLI)
+.vercel/

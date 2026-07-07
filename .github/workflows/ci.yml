@@ -51,6 +51,22 @@ jobs:
       - name: test
         run: pnpm -r test
 
+  website:
+    name: Marketing website (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The `frontend` job typechecks/lints/tests every workspace package; this
+      # additionally proves the site's Vite production build succeeds (what Vercel runs).
+      - name: build
+        run: pnpm --filter @notion/website build
+
   companion-daemon:
     name: Companion daemon (notion-watcher)
     runs-on: ubuntu-latest
