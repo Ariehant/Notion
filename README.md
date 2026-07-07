@@ -40,6 +40,21 @@ It runs as a real desktop app:
 | `docs/ARCHITECTURE.md`    | Decisions (collaboration model, source of truth, key pipeline, vault)                                                                   | —                             |
 | `docs/OPEN_NOTEBOOK.md`   | How the Open Notebook AI engine was merged (phases, storage seam, rollback flag)                                                        | —                             |
 
+## Download (no build needed)
+
+Grab a ready-to-run build from the repo's **[Releases](../../releases)** page —
+no toolchain, no `apt`, no `pnpm`:
+
+- **Windows** — `Notion_*_x64-setup.exe` (double-click installer)
+- **macOS** — `Notion_*.dmg`
+- **Linux** — `Notion_*.AppImage` (portable: `chmod +x Notion_*.AppImage && ./Notion_*.AppImage`) or the `.deb`
+
+These are produced by the **`Release (downloadable apps)`** GitHub Actions
+workflow, which builds each one on that OS's own runner. To cut a release, push a
+version tag (`git tag v0.1.0 && git push origin v0.1.0`) or run the workflow
+manually from the **Actions** tab with a tag name. It creates a **draft** release
+with all three attached — review it and click **Publish**.
+
 ## Build & run the desktop app
 
 Prerequisites: Rust (stable), Node 20+, pnpm, and — for the Tauri shell — the
