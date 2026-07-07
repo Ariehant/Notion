@@ -200,8 +200,16 @@ fn validate(raw: RawAction, now_unix: i64) -> Result<AgentAction, AgentError> {
             };
             let end_time = match raw.end_time {
                 // Reject inverted or absurd durations; fall back to a sane block.
-                Some(end) if end > start_time && end - start_time <= MAX_DURATION_SECS => end,
-                _ => start_time + default_len,
+                // Saturating math: the timestamps come straight from the model,
+                // so extreme values (e.g. i64::MIN/MAX) must not overflow — that
+                // would panic in debug and, worse, wrap past the max-duration
+                // guard in release.
+                Some(end)
+                    if end > start_time && end.saturating_sub(start_time) <= MAX_DURATION_SECS =>
+                {
+                    end
+                }
+                _ => start_time.saturating_add(default_len),
             };
             Ok(AgentAction::AddEvent {
                 title,
@@ -288,6 +296,28 @@ mod tests {
                 assert_eq!(end_time, 1_000_000 + DEFAULT_DURATION_SECS)
             }
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn extreme_timestamps_do_not_overflow() {
+        // The model output is untrusted: i64::MIN start with i64::MAX end must
+        // neither panic (debug) nor wrap past the max-duration guard (release).
+        let r = runner(
+            r#"{"action":"add_event","title":"X","start_time":-9223372036854775808,"end_time":9223372036854775807}"#,
+        );
+        match r.plan("x", NOW).unwrap() {
+            AgentAction::AddEvent {
+                start_time,
+                end_time,
+                ..
+            } => {
+                assert_eq!(start_time, i64::MIN);
+                // The absurd span is rejected and clamped to the default block,
+                // computed with saturating math (no overflow at i64::MIN).
+                assert_eq!(end_time, i64::MIN.saturating_add(DEFAULT_DURATION_SECS));
+            }
+            _ => panic!("expected add_event"),
         }
     }
 
