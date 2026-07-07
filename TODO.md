@@ -110,8 +110,8 @@ cp open-notebook/notion-mcp/target/release/notion-mcp ~/.local/bin/
 
 ## 4. After the merge — verify `main`
 
-- [ ] Watch CI on `main` go green (Rust core, frontend, desktop, 3 companion jobs,
-      2 Open Notebook jobs).
+- [x] CI on `main` is green across all 8 jobs (Rust core, frontend, desktop, 3
+      companion, 2 Open Notebook); the desktop job publishes an installable `.deb`.
 - [ ] Reproduce the build once from a clean clone to confirm your machine has all the
       OS packages: `pnpm install && cargo test && pnpm -r test`.
 - [ ] Decide whether to keep or delete the old feature branches — their history is now

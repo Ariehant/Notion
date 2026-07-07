@@ -35,7 +35,7 @@ It runs as a real desktop app:
 | `apps/desktop/src/`       | React app: vault gate, sidebar, CRDT block editor, batched persistence                                                                  | **built + tested (51 tests)** |
 | `apps/desktop/src-tauri/` | Tauri command layer: vault lifecycle, page/editor/search commands (`notion_core`)                                                       | **built + tested (4 tests)**  |
 | `companion/`              | GNOME Companion Calendar & Dynamic Island: shared-DB watcher daemon, GTK4 quick-view, Shell extension, local-AI add                     | **built + tested (28 tests)** |
-| `open-notebook/`          | Merged "Open Notebook" AI engine (memory/ingestion/studio/agents + MCP) sharing the encrypted DB, plus a CLI and a localhost MCP server | **built + tested (59 tests)** |
+| `open-notebook/`          | Merged "Open Notebook" AI engine (memory/ingestion/studio/agents + MCP) sharing the encrypted DB, plus a CLI and a localhost MCP server | **built + tested (61 tests)** |
 | `BUGFIXES.md`             | Every audit finding quoted → code that resolves it                                                                                      | —                             |
 | `docs/ARCHITECTURE.md`    | Decisions (collaboration model, source of truth, key pipeline, vault)                                                                   | —                             |
 | `docs/OPEN_NOTEBOOK.md`   | How the Open Notebook AI engine was merged (phases, storage seam, rollback flag)                                                        | —                             |

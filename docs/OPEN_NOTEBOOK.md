@@ -99,9 +99,10 @@ with vitest; the React components are thin glue.
   `sources`, `logs`. No GUI.
 - **`notion-mcp`** runs a localhost JSON-RPC 2.0 server exposing `search_notes`,
   `create_page`, and `add_event` so external clients (Claude Desktop, Cursor, a
-  browser extension) can edit the vault. It binds **loopback only** and refuses
-  any non-loopback address. The routing/validation is the tested
-  `open_notebook_core::mcp` module; the binary is a thin HTTP shell.
+  browser extension) can edit the vault. It binds **loopback only** — it resolves
+  the bind address and refuses it unless every resolved socket is loopback. The
+  routing/validation is the tested `open_notebook_core::mcp` module; the binary
+  is a thin HTTP shell.
 
 ## Phase 5 — calendar compatibility
 
@@ -130,8 +131,26 @@ re-index, since stored vectors would change dimension/space. Generative features
 
 ## Tests
 
-`open-notebook-core` carries 59 tests (53 pure + 6 SQLCipher integration): JSON
+`open-notebook-core` carries 61 tests (55 pure + 6 SQLCipher integration): JSON
 extraction, embedding math + blob round-trip, memory ranking + hybrid boost,
-ingestion, studio prompts, agent validation/clamping/execution, MCP dispatch,
-and the real encrypted-DB backend. The frontend adds 13 vitest cases for the
-pure AI UI logic. The CLI and MCP server build in dedicated CI jobs.
+ingestion, studio prompts, agent validation/clamping/overflow, MCP dispatch,
+and the real encrypted-DB backend. `notion-mcp` adds loopback-guard tests, and
+the frontend adds 13 vitest cases for the pure AI UI logic. The CLI and MCP
+server build in dedicated CI jobs.
+
+## Status
+
+Merged to `main`, and CI is green across all eight jobs — Rust core, frontend,
+desktop (which also bundles an installable `.deb`), the three companion jobs,
+and the two Open Notebook jobs (`notion-cli`, `notion-mcp`).
+
+An adversarial review pass then hardened the untrusted-input edges:
+
+- Agent + MCP event timestamps use **saturating** arithmetic, so an extreme
+  model/client value (e.g. `i64::MIN`/`i64::MAX`) is clamped to the default
+  block instead of overflowing (a debug panic / release wraparound before).
+- The `notion-mcp` loopback guard **resolves** the bind address and requires
+  every resolved socket to be loopback (a textual `127.` prefix check was
+  bypassable by a hostname that resolves off-host).
+- Id generation falls back to a timestamp if the RNG is unavailable, so it can
+  never emit a constant id that would collide via `ON CONFLICT`.
