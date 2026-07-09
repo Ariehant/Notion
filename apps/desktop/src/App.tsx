@@ -27,6 +27,8 @@ export function App() {
   const [unlocked, setUnlocked] = useState(false);
   const [pages, setPages] = useState<PageDto[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Mobile: the sidebar is an off-canvas drawer toggled by the menu button.
+  const [navOpen, setNavOpen] = useState(false);
   const { doc, ready } = usePageDoc(activeId);
   // Open Notebook AI (only when the backend reports the flag is on).
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -165,24 +167,51 @@ export function App() {
     setAiDialog({ open: false, prompt: "" });
   }, [flushRename]);
 
+  // On mobile (touch devices), lock the vault whenever the app is backgrounded
+  // so the decryption keys — which only live in native code while unlocked — are
+  // wiped from memory. Guarded to coarse pointers so desktop behaviour is
+  // unchanged (a hidden desktop window should stay unlocked).
+  useEffect(() => {
+    if (!unlocked) return;
+    const coarse = window.matchMedia?.("(pointer: coarse)").matches;
+    if (!coarse) return;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") void onLock();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [unlocked, onLock]);
+
   if (!unlocked) {
     return <VaultGate onUnlocked={() => setUnlocked(true)} />;
   }
 
   return (
     <div
-      className="workspace"
+      className={`workspace${navOpen ? " nav-open" : ""}`}
       onDragOver={aiEnabled ? (e) => e.preventDefault() : undefined}
       onDrop={aiEnabled ? (e) => void onDrop(e) : undefined}
     >
+      <button
+        type="button"
+        className="mobile-menu-btn"
+        aria-label="Open menu"
+        onClick={() => setNavOpen(true)}
+      >
+        ☰
+      </button>
       <Sidebar
         pages={pages}
         activeId={activeId}
-        onSelect={setActiveId}
+        onSelect={(id) => {
+          setActiveId(id);
+          setNavOpen(false);
+        }}
         onCreate={onCreate}
         onDelete={onDelete}
         onLock={onLock}
       />
+      {navOpen && <div className="scrim" aria-hidden="true" onClick={() => setNavOpen(false)} />}
       <main className="main-pane">
         {activePage && doc && ready ? (
           <Editor

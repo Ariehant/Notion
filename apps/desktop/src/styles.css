@@ -626,3 +626,91 @@ button {
   color: var(--text-dim);
   font-size: 13px;
 }
+
+/* --- Mobile / touch (Android app & small screens) ----------------------- */
+
+/* The hamburger and drawer scrim only exist on small/touch layouts. */
+.mobile-menu-btn,
+.scrim {
+  display: none;
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  /* Single column: the sidebar becomes an off-canvas drawer over the content. */
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(84vw, var(--sidebar-w));
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    z-index: 40;
+    padding-top: max(12px, env(safe-area-inset-top));
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.28);
+  }
+
+  .workspace.nav-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 30;
+  }
+
+  .mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: max(10px, env(safe-area-inset-top));
+    left: 10px;
+    z-index: 20;
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    background: var(--bg-alt);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  /* Give the editor room below the fixed menu button and comfortable margins. */
+  .main-pane {
+    padding-top: 48px;
+  }
+
+  .editor {
+    padding: 24px 20px 200px;
+  }
+
+  .page-title {
+    font-size: 28px;
+  }
+
+  /* Touch has no hover — enlarge tap targets and keep the delete affordance. */
+  .page-item {
+    padding: 12px 8px;
+  }
+
+  .page-item .delete {
+    opacity: 1;
+  }
+
+  /* Lift the floating action buttons above the home-gesture safe area. */
+  .ai-fab {
+    bottom: max(22px, calc(env(safe-area-inset-bottom) + 12px));
+  }
+
+  .ai-studio-toggle {
+    bottom: max(84px, calc(env(safe-area-inset-bottom) + 74px));
+  }
+}

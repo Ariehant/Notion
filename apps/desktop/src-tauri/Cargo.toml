@@ -8,8 +8,16 @@
 name = "notion-desktop"
 version = "0.1.0"
 edition = "2021"
-description = "Tauri desktop shell for the offline-first Notion-like app."
+description = "Tauri shell (desktop + Android/iOS) for the offline-first Notion-like app."
 publish = false
+
+# The library carries the shared app (see src/lib.rs). Mobile (Android/iOS)
+# targets link this crate as a shared/static library and call the
+# `mobile_entry_point`, so it must expose `cdylib` + `staticlib`; `rlib` lets the
+# desktop `main.rs` binary link it too. This is the canonical Tauri 2 layout.
+[lib]
+name = "notion_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

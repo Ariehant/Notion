@@ -18,7 +18,9 @@ export type IconName =
   | "arrowRight"
   | "windows"
   | "apple"
-  | "linux";
+  | "linux"
+  | "android"
+  | "fingerprint";
 
 interface IconProps {
   name: IconName;
@@ -77,13 +79,33 @@ const paths: Record<IconName, JSX.Element> = {
   linux: (
     <path d="M12 2c-2 0-3 1.8-3 4 0 1.4.2 2.2-.6 3.4C7.2 11.2 6 12.6 6 14.6c0 .8.3 1.3-.2 2.2-.4.7-1.3 1.2-1.3 2 0 .7.7 1 1.7 1.2 1.2.3 2 .8 3 .8s1.4-.6 2.8-.6 1.8.6 2.8.6 1.8-.5 3-.8c1-.2 1.7-.5 1.7-1.2 0-.8-.9-1.3-1.3-2-.5-.9-.2-1.4-.2-2.2 0-2-1.2-3.4-2.4-5.2-.8-1.2-.6-2-.6-3.4 0-2.2-1-4-3-4zm-1.6 6.1c.5 0 .9.5.9 1s-.4.8-.9.8-.9-.3-.9-.8.4-1 .9-1zm3.2 0c.5 0 .9.5.9 1s-.4.8-.9.8-.9-.3-.9-.8.4-1 .9-1z" />
   ),
+  android: (
+    <path d="M8 8a4 4 0 0 1 8 0zM7 9.2h10V17a1 1 0 0 1-1 1h-1.2v2.8a1 1 0 0 1-2 0V18h-1.6v2.8a1 1 0 0 1-2 0V18H8a1 1 0 0 1-1-1zM4.8 9.6a1 1 0 0 1 1 1v4.8a1 1 0 0 1-2 0v-4.8a1 1 0 0 1 1-1zm14.4 0a1 1 0 0 1 1 1v4.8a1 1 0 0 1-2 0v-4.8a1 1 0 0 1 1-1z" />
+  ),
+  fingerprint: (
+    <>
+      <path d="M4 12a8 8 0 0 1 16 0" />
+      <path d="M7 12a5 5 0 0 1 10 0v2" />
+      <path d="M9.5 12a2.5 2.5 0 0 1 5 0v3.5" />
+      <path d="M12 12v5.5" />
+      <path d="M7 15v2M17 14.5v2.5" />
+    </>
+  ),
 };
 
 /** Every valid icon name, for runtime validation of content data. */
 export const iconNames = Object.keys(paths) as IconName[];
 
 // Icons that read best as solid fills rather than strokes.
-const filled = new Set<IconName>(["sparkle", "github", "shield", "windows", "apple", "linux"]);
+const filled = new Set<IconName>([
+  "sparkle",
+  "github",
+  "shield",
+  "windows",
+  "apple",
+  "linux",
+  "android",
+]);
 
 export function Icon({ name, size = 24, className }: IconProps) {
   const solid = filled.has(name);

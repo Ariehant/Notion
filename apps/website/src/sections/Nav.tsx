@@ -13,6 +13,7 @@ export function Nav() {
           <a href="#features">Features</a>
           <a href="#security">Security</a>
           <a href="#download">Download</a>
+          <a href="/android">Android</a>
         </nav>
         <div className="nav-actions">
           <a className="btn btn-ghost" href={site.githubUrl} target="_blank" rel="noreferrer">
